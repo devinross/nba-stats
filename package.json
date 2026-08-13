@@ -1,0 +1,23 @@
+{
+  "name": "nba-analytics",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "fetch": "node scripts/fetch-data.mjs",
+    "dev": "vite",
+    "build": "vite build && node scripts/prerender.mjs",
+    "refresh": "node scripts/fetch-data.mjs && npm run build",
+    "og": "node scripts/build-og.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  }
+}

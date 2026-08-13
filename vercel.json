@@ -1,0 +1,45 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "//": "Data for seasons through 2024-25 is finished and can never change, so it is cached hard. Directories are named by a season's start year (2024 = 2024-25), so this matches everything up to and including 2024. Add each season here once it ends — forgetting to only costs a revalidation round trip, which is why the catch-all below is the safe default rather than the other way round.",
+      "source": "/data/:year(199[6-9]|20[01][0-9]|202[0-4])/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "//": "Everything else under /data — the season index and the season in progress — is rewritten nightly, so it must be revalidated. Unchanged files come back as a 304 rather than a re-download.",
+      "source": "/data/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "//": "Client-side fallback. Vercel serves any matching file from dist/ first, so every prerendered page still wins; this only catches routes that have no file of their own — a past season's player pages, which render client-side by design. /data and /assets are excluded so a missing data file 404s honestly instead of returning HTML.",
+      "source": "/((?!data/|assets/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Light-only, matching highlightfactory.app — there is no night mode and
+         no theme toggle, so nothing needs to be applied before paint. -->
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <!-- Kept under ~60 characters so Google shows it without truncating. -->
+    <title>NBA Stats — Shot Charts & Four Factors | Highlight Factory</title>
+    <!-- ~155 characters: long enough to be used verbatim, short enough not to
+         be cut. Avoid hardcoding the team count here — this file is static
+         while the league isn't. -->
+    <meta
+      name="description"
+      content="Free NBA team and player analytics: shot-zone charts, four factors, lineup net ratings, on/off impact and league-wide rankings for all 30 teams. Updated nightly."
+    />
+    <link rel="canonical" href="https://nba.highlightfactory.app/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+
+    <!-- Preconnect to the webfont host: JetBrains Mono is requested from the
+         stylesheet, so the connection is otherwise only opened after the CSS
+         parses. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Highlight Factory" />
+    <meta property="og:title" content="NBA Stats — Shot Charts, Four Factors & Lineups" />
+    <meta
+      property="og:description"
+      content="Shot-zone maps, four factors, lineup net ratings and on/off impact for every NBA team, refreshed nightly."
+    />
+    <meta property="og:url" content="https://nba.highlightfactory.app/" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://nba.highlightfactory.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="NBA Stats by Highlight Factory — shot zones, four factors, lineups, on/off, league ranks" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@highlightfactory" />
+    <meta name="twitter:image" content="https://nba.highlightfactory.app/og.png" />
+
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="2a7dbe55-f793-4305-b1cf-d9fc3447bb96"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

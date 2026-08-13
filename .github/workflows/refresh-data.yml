@@ -1,0 +1,53 @@
+name: Refresh NBA data
+
+# Runs the fetch script on a schedule, commits the refreshed current-season data
+# under public/data/, and pushes. If the repo is connected to Vercel, that push
+# auto-deploys the site with fresh stats — no servers to manage.
+#
+# This only touches the season in progress. Completed seasons are fetched once
+# (npm run fetch -- --missing) and committed by hand; they never change.
+
+on:
+  schedule:
+    - cron: "0 11 * * *" # 11:00 UTC nightly (~3-4am US Pacific), after west-coast games are final. UTC only; adjust as you like.
+  workflow_dispatch: {} # also lets you trigger a refresh by hand from the Actions tab
+
+permissions:
+  contents: write # needed so the workflow can push the updated data file
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Fetch latest stats
+        run: npm run fetch
+
+      # Guard: if stats.nba.com blocked this runner, the current season's file
+      # will have no teams. Fail here so we never overwrite good data with empty.
+      - name: Sanity-check the data
+        run: |
+          season=$(jq -r '.currentSeason' public/data/index.json)
+          count=$(jq '.teams | length' "public/data/$season/league.json")
+          carried=$(jq '.stale | length' "public/data/$season/league.json")
+          echo "season $season: $count teams, $carried league-wide dataset(s) carried over from the previous fetch"
+          test "$count" -gt 0
+
+      - name: Commit if the data changed
+        run: |
+          git config user.name "nba-data-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          if git diff --staged --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "chore: nightly NBA data refresh"
+            git push
+          fi
