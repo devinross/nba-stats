@@ -24,6 +24,19 @@ import { sourceFor } from "./sources.js";
 const r1 = (n) => Math.round(n * 10) / 10;
 const signed = (v, digits = 1) => `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
 
+/**
+ * "Brandon Sanders" -> "B. Sanders". The leader cards sit five-across at desktop
+ * width, which leaves ~150px for a name, a team abbreviation and a number on one
+ * line — not enough for "Shai Gilgeous-Alexander". Everything after the first
+ * word is kept, so "Jaren Jackson Jr." stays "J. Jackson Jr." rather than losing
+ * the suffix that distinguishes him.
+ */
+function shortName(full) {
+  const parts = String(full).trim().split(/\s+/);
+  if (parts.length < 2) return parts[0] || "";
+  return `${parts[0].charAt(0)}. ${parts.slice(1).join(" ")}`;
+}
+
 // The NBA schedules against Eastern time, so "what's on today" has to be asked
 // in the league's timezone — otherwise a visitor in London sees tomorrow's slate
 // all evening, and one in Honolulu sees yesterday's. en-CA formats as
@@ -452,9 +465,9 @@ function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
   const [top, ...rest] = rows;
   const teamOf = (id) => byId.get(id);
 
-  const name = (row, style) => {
+  const name = (row, text = row.name) => {
     const href = playerHref(row.teamId, row.name);
-    const label = <span style={style}>{row.name}</span>;
+    const label = <span title={row.name}>{text}</span>;
     if (!href) return label;
     return (
       <a
@@ -481,7 +494,9 @@ function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
         {teamOf(top.teamId) && <TeamBadge team={teamOf(top.teamId)} size={26} />}
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 13.5, lineHeight: 1.25 }}>{name(top)}</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {name(top)}
+          </div>
           <div style={{ fontSize: 11, color: C.MUTE, lineHeight: 1.2 }}>{(teamOf(top.teamId) || {}).abbr}</div>
         </div>
       </div>
@@ -489,12 +504,15 @@ function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
         {top.v.toFixed(1)}
         <span style={{ fontSize: 10, color: C.MUTE, fontWeight: 600, marginLeft: 3 }}>{cat.unit}</span>
       </div>
-      <ol style={{ listStyle: "none", margin: "10px 0 0", padding: 0, display: "grid", gap: 5 }}>
+      {/* minmax(0, 1fr): a grid column defaults to max-content, so without this
+          the widest name sets the column width and the row overflows the card —
+          the number ends up painted outside its right edge. */}
+      <ol style={{ listStyle: "none", margin: "10px 0 0", padding: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 5 }}>
         {rest.map((row, i) => (
           <li key={row.name} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5 }}>
             <span style={{ color: C.MUTE, fontFamily: FONT_DISPLAY, width: 12 }}>{i + 2}</span>
             <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {name(row)}
+              {name(row, shortName(row.name))}
               <span style={{ color: C.MUTE, marginLeft: 6 }}>{(teamOf(row.teamId) || {}).abbr}</span>
             </span>
             <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700 }}>{row.v.toFixed(1)}</span>

@@ -463,9 +463,24 @@ per-team requests take about 25 seconds in total and return the lot.
 against an endpoint that answers in one of two regimes: ~150ms for a game its
 backend has warm, or almost exactly 30 seconds for one it doesn't (both return
 correct data). So every game is cached to its own file and never refetched, one
-retry rather than an escalating chain, and a per-run time budget after which the
-rest is left for tomorrow. A cold season fills in over a week or two of nightly
-runs; each run after that is a handful of new games.
+retry rather than an escalating chain, and **a cap of 8 games per run** — which
+keeps the nightly job to a few minutes and goes easy on the endpoint.
+
+That cap is worth understanding before you rely on it. Eight a night is fine for
+**keeping up** with a season in progress, which only produces ~10 games a night
+once the backfill has caught up. It is not a way to **backfill** one: 1,230
+games at 8 a night is about five months, and the rotation chart stays thin until
+then. Burst it by hand instead:
+
+```bash
+npm run fetch -- --season 2025-26 --rotation-limit 0    # no cap: fetch every missing game
+npm run fetch -- --season 2025-26 --rotation-limit 200  # or a specific number
+```
+
+The step reports itself game by game — which matchup is on the wire, how long it
+took and which regime it landed in, a running tally every five games, and a
+closing line saying how many games are still missing and how many more runs that
+is at the current cap.
 
 The cache lives in **`data-cache/rotations/<season>/`**, outside `public/` on
 purpose: the browser only reads the season aggregate that gets folded into each

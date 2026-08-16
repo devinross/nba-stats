@@ -36,7 +36,7 @@
 // many shared hosts are not). It prints the real status of every request.
 // ---------------------------------------------------------------------------
 
-import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -740,18 +740,25 @@ const ROTATION_TIMEOUT_MS = 35000;
 // The schedule is cut into blocks this size for the "quarter of the season"
 // toggles. 82 games gives four blocks of twenty and a short fifth.
 const SEGMENT_GAMES = LEAGUE.segmentGames;
-// A hard ceiling on time spent fetching new rotations in one run: whatever is
-// left when the budget runs out is next run's work, which is how this step
-// already treats failures.
+// A hard ceiling on time spent fetching new rotations in one run. With the cap
+// below it almost never binds — eight games can't outrun it even if every one
+// takes the slow path — so it is a backstop against the endpoint hanging in
+// some way the per-request timeout doesn't catch, not the usual limit.
 const ROTATION_BUDGET_MS = 25 * 60 * 1000;
-// How many games this step will *attempt* in one run — not how many succeed,
-// and in practice not the binding constraint: at the stalled rate above the
-// budget runs out first, around fifty games. It is the cap for a night when the
-// endpoint is fast, where a run can clear several hundred. A full season is
-// 1,230 games, so a cold season fills in over a week or two of nightly runs.
-// Override with `--rotation-limit N` (`--rotation-limit 0` for no cap) when
-// backfilling by hand.
-const ROTATION_MAX_PER_RUN = 600;
+// How many games this step will *attempt* in one run — not how many succeed.
+// Deliberately small: the nightly job stays a few minutes rather than a long
+// throttled pass, and this endpoint is the one we lean on hardest.
+//
+// The trade-off is real and worth knowing. A season is 1,230 games, so at eight
+// a night a cold season takes about five months to fill in, and the rotation
+// chart is thin until then. That is fine for the season in progress, which only
+// ever needs to keep up with ~10 new games a night once it has caught up — but
+// backfilling an archived season this way is not practical. Burst it by hand
+// instead: `--rotation-limit 0` (no cap) or a specific number.
+const ROTATION_MAX_PER_RUN = 8;
+// Above this, a request took the slow path (see ROTATION_TIMEOUT_MS). Logged
+// per game so a run makes it obvious which regime the endpoint is in.
+const ROTATION_SLOW_MS = 10000;
 const REGULATION_MIN = LEAGUE.regulationMinutes; // the heat map's x-axis; overtime is
                            // counted in the per-player totals but has no column of its own
 
@@ -830,6 +837,7 @@ async function fetchRotations(season, gameIds, { onPlan, onProgress, limit = ROT
   }
 
   const failed = [];
+  const durations = []; // every attempt's wall clock, for the pace line + summary
   const deadline = Date.now() + ROTATION_BUDGET_MS;
   let ranOut = 0;
   for (const [i, id] of queue.entries()) {
@@ -860,23 +868,40 @@ async function fetchRotations(season, gameIds, { onPlan, onProgress, limit = ROT
     } else {
       failed.push({ id, error: lastErr });
     }
+    const ms = Date.now() - startedAt;
+    durations.push(ms);
     if (onProgress) {
+      // Everything the caller needs to narrate the step without recomputing it:
+      // this game, the run's tally, the pace, and where the season stands.
+      const done = i + 1;
+      const perGame = durations.reduce((a, b) => a + b, 0) / durations.length + ROTATION_DELAY_MS;
       onProgress({
-        done: i + 1,
+        done,
         total: queue.length,
+        okCount: done - failed.length,
         failed: failed.length,
         id,
         ok: Boolean(game),
         error: lastErr,
         tries,
-        ms: Date.now() - startedAt,
+        ms,
+        slow: ms >= ROTATION_SLOW_MS, // took the ~30s path rather than the ~150ms one
         players: game ? Object.keys(game.names).length : 0,
         stints: game ? game.stints.length : 0,
+        perGameMs: perGame,
+        etaMs: (queue.length - done) * perGame,
+        // The season, not just this run's queue — "8/8 done" means nothing on
+        // its own when there are 1,230 games to get through.
+        seasonHeld: byGame.size,
+        seasonTotal: gameIds.length,
+        seasonMissing: gameIds.length - byGame.size,
       });
     }
     await sleep(ROTATION_DELAY_MS);
   }
 
+  // How the endpoint behaved, for the one-line verdict at the end of the step.
+  const sorted = [...durations].sort((a, b) => a - b);
   return {
     byGame,
     cached: gameIds.length - missing.length,
@@ -884,6 +909,15 @@ async function fetchRotations(season, gameIds, { onPlan, onProgress, limit = ROT
     failed,
     ranOut,
     deferred, // held back by the per-run cap, not by failure or the budget
+    timing: durations.length
+      ? {
+          attempts: durations.length,
+          slow: durations.filter((d) => d >= ROTATION_SLOW_MS).length,
+          medianMs: sorted[Math.floor(sorted.length / 2)],
+          maxMs: sorted[sorted.length - 1],
+          totalMs: durations.reduce((a, b) => a + b, 0),
+        }
+      : null,
   };
 }
 
@@ -1042,12 +1076,20 @@ async function readSeason(dir, season) {
   if (Number(league.meta.season) !== Number(season)) return null; // never back-fill across seasons
 
   const data = {};
+  // A team file that can't be read means that team has nothing to fall back on,
+  // which is survivable — but it must not be silent. Without this, a failed
+  // request for a team whose previous file was missing produces an empty
+  // section, no "stale" marker and no explanation anywhere in the log, which is
+  // indistinguishable from the carry-over being broken.
+  const unreadable = [];
   for (const team of league.teams) {
     try {
       data[team.id] = JSON.parse(await readFile(teamPath(dir, season, team.id), "utf8"));
-    } catch (_) { /* a missing team file just means nothing to carry over for it */ }
+    } catch (e) {
+      unreadable.push({ id: team.id, name: team.teamName || team.name, error: e.message });
+    }
   }
-  return { ...league, data };
+  return { ...league, data, unreadable };
 }
 
 // "Nothing usable came back": null/undefined, an empty array, or an empty object.
@@ -1098,9 +1140,16 @@ const indexPath = (dir) => join(dir, "index.json");
 const leaguePath = (dir, season) => join(dir, String(season), "league.json");
 const teamPath = (dir, season, teamId) => join(dir, String(season), "teams", `${teamId}.json`);
 
+// Written to a temporary file and renamed into place, which is atomic: a run
+// that is killed mid-write leaves either the old file or the new one, never a
+// half-written one. This matters most for index.json — a truncated index parses
+// as nothing, and updateIndex would then rebuild it from scratch and silently
+// drop every season it didn't fetch this run.
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(value));
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(value));
+  await rename(tmp, path);
 }
 
 /**
@@ -1150,7 +1199,7 @@ async function updateIndex(dir, payload) {
   try {
     const existing = JSON.parse(await readFile(indexPath(dir), "utf8"));
     if (existing && Array.isArray(existing.seasons)) index = existing;
-  } catch (_) { /* first season written */ }
+  } catch (_) { /* first season written, or the index was lost — recovered below */ }
 
   const season = payload.meta.season;
   const entry = {
@@ -1164,8 +1213,43 @@ async function updateIndex(dir, payload) {
   index.currentSeason = CURRENT_SEASON;
   index.seasons = [...index.seasons.filter((s) => Number(s.season) !== Number(season)), entry]
     .sort((a, b) => b.season - a.season); // newest first: the order the dropdown wants
+
+  // The index is derived data, so it is reconciled against what is actually on
+  // disk rather than trusted. A season whose folder exists but whose entry is
+  // missing gets rebuilt from its own files — which is what recovers a lost or
+  // truncated index instead of quietly publishing a site with one season in the
+  // dropdown and nine still sitting in public/data.
+  const known = new Set(index.seasons.map((s) => Number(s.season)));
+  for (const onDisk of await seasonsOnDisk(dir)) {
+    if (known.has(onDisk)) continue;
+    const recovered = await readSeason(dir, onDisk);
+    if (!recovered) continue;
+    index.seasons.push({
+      season: onDisk,
+      generatedAt: recovered.meta.generatedAt,
+      teams: recovered.teams.length,
+      games: Object.values(recovered.data).reduce((a, b) => a + (b.games || []).length, 0),
+      missing: countMissing(recovered),
+    });
+    console.log(`  index: recovered the ${seasonLabel(onDisk)} entry from public/data/${onDisk}/`);
+  }
+  index.seasons.sort((a, b) => b.season - a.season);
+
   await writeJson(indexPath(dir), index);
   return entry;
+}
+
+/** Every season with a folder under the output directory, newest first. */
+async function seasonsOnDisk(dir) {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((e) => e.isDirectory() && /^\d{4}$/.test(e.name))
+      .map((e) => Number(e.name))
+      .sort((a, b) => b - a);
+  } catch (_) {
+    return [];
+  }
 }
 
 // Datasets that would render as "unavailable" — nothing fetched and nothing to
@@ -1204,9 +1288,19 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   const prevAt = prev ? prev.meta.generatedAt : null;
   console.log(
     prev
-      ? `Already on disk from ${prevAt} — will back-fill anything that fails today.\n`
-      : "Nothing on disk for this season — nothing to fall back on if a request fails.\n"
+      ? `Already on disk from ${prevAt} — will back-fill anything that fails today.`
+      : "Nothing on disk for this season — nothing to fall back on if a request fails."
   );
+  if (prev && prev.unreadable && prev.unreadable.length) {
+    // Named, because these are exactly the teams where a failed request today
+    // will leave a hole rather than last night's numbers.
+    console.log(
+      `  ${prev.unreadable.length} team file${prev.unreadable.length === 1 ? "" : "s"} could not be read, so ` +
+        `${prev.unreadable.length === 1 ? "it has" : "they have"} nothing to fall back on: ` +
+        prev.unreadable.map((t) => `${t.name} (${t.error})`).join(", ")
+    );
+  }
+  console.log("");
 
   // ----- league-wide data (one call each) -----
   // Each one is numbered so a run that stalls says how far in it got. A
@@ -1659,10 +1753,12 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
       return `${ab(away)} @ ${ab(home)}${when}`;
     };
-    begin(`  • ${seasonLabel(season)} rotations … `);
-    // begin() leaves its line open for the ticker to overwrite. In a log there
-    // is no ticker, so the first per-game line has to close it first.
-    let lineOpen = true;
+    // This step is the slowest thing in a run and the only one that can sit
+    // silent for half a minute at a time, so it narrates every game rather than
+    // sampling. With the per-run cap that is a handful of lines, not a flood.
+    // begin() opens a line the ticker overwrites and done() closes, so it is
+    // started at the end of onPlan — after the plan has had its own full lines.
+    let lineOpen = false;
     const logLine = (line) => {
       if (lineOpen) {
         process.stdout.write("\n");
@@ -1670,38 +1766,71 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       }
       console.log(line);
     };
+    const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+    const mins = (ms) =>
+      ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.max(1, Math.round(ms / 1000))}s`;
+    const pct = (a, b) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "0%");
+
     try {
       const res = await fetchRotations(season, gameIds, {
         limit: rotationLimit,
+        // Printed before the first request goes out, in a terminal or not: it
+        // is the answer to "how long is this going to sit here", and to "why is
+        // it only doing eight of them".
         onPlan: ({ total, cached, missing, queued, deferred, estMs }) => {
-          if (TTY || !missing) return;
-          // Without a terminal this is the only chance to say how long the step
-          // is about to sit there before the first game comes back.
-          const held = deferred ? ` · ${deferred} held for later runs (cap ${rotationLimit}/run)` : "";
-          logLine(
-            `      ${seasonLabel(season)} rotations: ${total} games on the schedule · ${cached} already on disk · ` +
-              `${missing} still missing → fetching ${queued} now` +
-              ` (~${Math.max(1, Math.round(estMs / 60000))} min if they all answer)${held}`
-          );
-        },
-        onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, players }) => {
-          const label = gameLabel(id);
-          if (TTY) {
-            const note = `${done_}/${total} ${label}${failed ? ` (${failed} failed)` : ""}`;
-            process.stdout.write(`\r  • ${seasonLabel(season)} rotations … ${note}${CLEAR_EOL}`);
+          console.log(`  • ${seasonLabel(season)} rotations · ${total} games this season`);
+          if (!missing) {
+            console.log(`      all ${total} already cached — nothing to fetch`);
+            begin(`  • ${seasonLabel(season)} rotations … `);
+            lineOpen = true;
             return;
           }
-          // One line per game would be 600 lines of log a night, so without a
-          // terminal this reports every fiftieth game and every failure — enough
-          // to tell a run that is moving from one that is hung.
-          if (ok && done_ % 50 !== 0 && done_ !== total) return;
-          const outcome = ok
-            ? `${players} players${tries > 1 ? ` (retry)` : ""}`
-            : `FAILED: ${error || "unknown"}`;
-          logLine(
-            `      [${stamp()}] ${seasonLabel(season)} rotations ${done_}/${total}  ${label} … ` +
-              `${outcome} · ${(ms / 1000).toFixed(1)}s`
+          console.log(
+            `      ${cached} cached (${pct(cached, total)}) · ${missing} missing → attempting ${queued} this run` +
+              (deferred ? ` · ${deferred} held back by the ${rotationLimit}/run cap` : "")
           );
+          console.log(
+            `      ~${mins(estMs)} if the endpoint answers warm; a stalled game takes ~${Math.round(ROTATION_TIMEOUT_MS / 1000)}s each ` +
+              `(budget ${mins(ROTATION_BUDGET_MS)})`
+          );
+          if (deferred) {
+            const runs = Math.ceil(missing / Math.max(1, queued));
+            console.log(
+              `      at ${queued} a run that is ~${runs} more run${runs === 1 ? "" : "s"} to finish the season · ` +
+                `use --rotation-limit 0 to fetch the rest in one go`
+            );
+          }
+          begin(`  • ${seasonLabel(season)} rotations … `);
+          lineOpen = true;
+        },
+        onProgress: ({
+          done: done_, total, okCount, failed, id, ok, error, tries, ms, slow,
+          players, stints, perGameMs, etaMs, seasonHeld, seasonTotal,
+        }) => {
+          const label = gameLabel(id);
+          const outcome = ok
+            ? `${players} players, ${stints} stints${tries > 1 ? " (took a retry)" : ""}${slow ? " · slow path" : ""}`
+            : `FAILED: ${error || "unknown"}${tries > 1 ? ` (${tries} tries)` : ""}`;
+          if (TTY) {
+            // One live line: which game, how the run is going, and when it ends.
+            const note =
+              `${done_}/${total} · ${okCount} ok${failed ? `, ${failed} failed` : ""} · ` +
+              `${label} · ${secs(ms)} · ~${mins(etaMs)} left`;
+            process.stdout.write(`\r  • ${seasonLabel(season)} rotations … ${note}${CLEAR_EOL}`);
+            lineOpen = true;
+            return;
+          }
+          logLine(
+            `      [${stamp()}] ${done_}/${total}  ${label} … ${outcome} · ${secs(ms)}`
+          );
+          // A tally every few games, so a long log still answers "is this
+          // moving, and how far into the season are we" without arithmetic.
+          if (done_ % 5 === 0 || done_ === total) {
+            logLine(
+              `      ├─ ${okCount}/${done_} ok · ${secs(perGameMs)}/game · ~${mins(etaMs)} left this run · ` +
+                `season ${seasonHeld}/${seasonTotal} (${pct(seasonHeld, seasonTotal)})`
+            );
+          }
         },
       });
       // Each team's schedule in date order — the same sort buildGames uses, so
@@ -1718,16 +1847,38 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         ])
       );
       rotationByTeam = aggregateRotations(res.byGame, teamIds, orderByTeam);
-      const bits = [`${res.byGame.size}/${gameIds.length} games`];
+      const bits = [`${res.byGame.size}/${gameIds.length} games (${pct(res.byGame.size, gameIds.length)})`];
       if (res.cached) bits.push(`${res.cached} cached`);
       if (res.fetched) bits.push(`${res.fetched} new`);
       if (res.failed.length) bits.push(`${res.failed.length} failed — will retry next run`);
-      if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(ROTATION_BUDGET_MS / 60000)}min budget)`);
+      if (res.ranOut) bits.push(`${res.ranOut} left for next run (${mins(ROTATION_BUDGET_MS)} budget)`);
       if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${rotationLimit}/run)`);
       const summary = bits.join(" · ");
-      // If per-game lines already closed the label line, the summary needs to
-      // carry the label itself instead of finishing a line that's long gone.
+      // The per-game lines already closed the label line, so the summary has to
+      // carry the label itself rather than finishing a line that's long gone.
       done(lineOpen ? summary : `  • ${seasonLabel(season)} rotations … ${summary}`);
+
+      // Which regime the endpoint was in tonight. Worth a line of its own: a run
+      // where every game took the slow path is not broken, it is throttled, and
+      // that reads very differently from one where they all answered fast.
+      if (res.timing) {
+        const t = res.timing;
+        console.log(
+          `      endpoint: ${t.slow}/${t.attempts} took the slow path · median ${secs(t.medianMs)} · ` +
+            `slowest ${secs(t.maxMs)} · ${mins(t.totalMs)} of request time`
+        );
+      }
+      // What is left, and what it would take — so the next run is a decision
+      // rather than a guess.
+      const left = gameIds.length - res.byGame.size;
+      if (left) {
+        const perRun = rotationLimit > 0 ? Math.min(rotationLimit, left) : left;
+        const runs = Math.ceil(left / Math.max(1, perRun));
+        console.log(
+          `      ${left} game${left === 1 ? "" : "s"} still missing · ~${runs} more run${runs === 1 ? "" : "s"} at ${perRun}/run · ` +
+            `\`npm run fetch -- --season ${seasonLabel(season)} --rotation-limit 0\` to finish it now`
+        );
+      }
       if (res.failed.length) {
         // One line for the reasons, not one per game: this endpoint fails in
         // clusters and the pattern (all of them, or three of two hundred) is
