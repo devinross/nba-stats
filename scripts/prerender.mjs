@@ -161,7 +161,106 @@ const prefix = () => seasonPrefix(season, currentSeason);
 const teamPathOf = (team) => `${prefix()}/team/${teamSlug(team)}`;
 const homePath = () => prefix() || "/";
 
+// The home page is the league page, so its shell is the league's own numbers:
+// the slate around the build date, the standings, and the leaderboards. Same
+// three things the app draws, in plain HTML.
+const ET_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric", month: "2-digit", day: "2-digit",
+});
+const ET_TIME = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "numeric", minute: "2-digit",
+});
+
+function slateShell(teamById) {
+  const games = league.scoreboard || [];
+  if (!games.length) return "";
+  const dates = [...new Set(games.map((g) => g.date))].sort();
+  const today = ET_DAY.format(new Date());
+  const day = dates.find((d) => d >= today) || dates[dates.length - 1];
+  const onDay = games.filter((g) => g.date === day);
+  if (!onDay.length) return "";
+
+  const label = new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC", weekday: "long", month: "long", day: "numeric",
+  });
+  const rows = onDay
+    .map((g) => {
+      const home = teamById.get(g.home), away = teamById.get(g.away);
+      if (!home || !away) return "";
+      const when = g.status === 1
+        ? `${g.tip ? `${ET_TIME.format(new Date(g.tip))} ET` : "time TBD"}`
+        : `final, ${away.abbr} ${g.awayScore} – ${home.abbr} ${g.homeScore}`;
+      return `<li><a href="${teamPathOf(away)}">${esc(away.name)}</a> at <a href="${teamPathOf(home)}">${esc(home.name)}</a> — ${esc(when)}</li>`;
+    })
+    .join("");
+  return `<h2>${LEAGUE.name} games, ${esc(label)}</h2>
+      <ul>${rows}</ul>`;
+}
+
+function standingsShell(teamById) {
+  const rows = league.standings || [];
+  if (!rows.length) return "";
+  const netById = new Map((league.teamRanks?.teams || []).map((t) => [t.teamId, t.net]));
+  // Split the way the league seeds. A team the conference map doesn't know
+  // would otherwise vanish from both tables, so that case falls back to one.
+  const groups = [["Eastern Conference", "East"], ["Western Conference", "West"]]
+    .map(([label, conf]) => [label, rows.filter((t) => t.conf === conf)]);
+  const split = groups.reduce((a, [, list]) => a + list.length, 0) === rows.length
+    && groups.every(([, list]) => list.length);
+  const tables = split ? groups : [[`${seasonLabel(season)} ${LEAGUE.name} standings`, rows]];
+
+  return tables
+    .map(([label, list]) => {
+      const body = list
+        .map((t, i) => {
+          const team = teamById.get(t.teamId);
+          if (!team) return "";
+          const net = netById.get(t.teamId);
+          return `<tr><td>${i + 1}</td><td><a href="${teamPathOf(team)}">${esc(team.name)}</a></td>` +
+            `<td>${t.w}–${t.l}</td><td>${t.pct.toFixed(3)}</td><td>${t.pf.toFixed(1)}</td><td>${t.pa.toFixed(1)}</td>` +
+            `<td>${t.diff > 0 ? "+" : ""}${t.diff.toFixed(1)}</td><td>${net == null ? "—" : `${net > 0 ? "+" : ""}${net}`}</td></tr>`;
+        })
+        .join("");
+      return `<h2>${esc(label)}${split ? `, ${seasonLabel(season)}` : ""}</h2>
+      <table><thead><tr><th>#</th><th>Team</th><th>W–L</th><th>PCT</th><th>PF</th><th>PA</th><th>Diff</th><th>Net rating</th></tr></thead>
+      <tbody>${body}</tbody></table>`;
+    })
+    .join("");
+}
+
+const LEADER_LABELS = [
+  ["pts", "Points", "points"],
+  ["reb", "Rebounds", "rebounds"],
+  ["ast", "Assists", "assists"],
+  ["stl", "Steals", "steals"],
+  ["blk", "Blocks", "blocks"],
+];
+
+function leadersShell(teamById) {
+  const leaders = league.leaders;
+  if (!leaders) return "";
+  const blocks = LEADER_LABELS.map(([key, label, noun]) => {
+    const rows = leaders[key] || [];
+    if (!rows.length) return "";
+    const items = rows
+      .map((p) => {
+        const team = teamById.get(p.teamId);
+        const slug = team && (team.players || []).find((x) => x.name === p.name);
+        const name = slug
+          ? `<a href="${teamPathOf(team)}/${slug.slug}">${esc(p.name)}</a>`
+          : esc(p.name);
+        return `<li>${name}${team ? `, ${esc(team.name)}` : ""} — ${p.v} ${noun} per game</li>`;
+      })
+      .join("");
+    return `<h3>${label}</h3><ul>${items}</ul>`;
+  }).join("");
+  return blocks ? `<h2>${seasonLabel(season)} ${LEAGUE.name} league leaders</h2>${blocks}` : "";
+}
+
 function homeShell() {
+  const teamById = new Map(league.teams.map((t) => [t.id, t]));
   const teamLinks = league.teams
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -176,7 +275,10 @@ function homeShell() {
     })
     .join("");
   return `<h1>${seasonLabel(season)} ${LEAGUE.name} Stats</h1>
-      <p>Team and player analytics for all ${league.teams.length} ${LEAGUE.name} teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
+      <p>${isArchive ? "Final standings" : "Standings, today's games"}, league leaders and team analytics for all ${league.teams.length} ${LEAGUE.name} teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
+      ${slateShell(teamById)}
+      ${standingsShell(teamById)}
+      ${leadersShell(teamById)}
       <h2>What this covers</h2>
       <ul>
         <li>Shot-zone charts — field-goal percentage and shot volume by court zone, compared with the ${LEAGUE.name} average.</li>

@@ -9,6 +9,7 @@
     "build": "vite build && node scripts/prerender.mjs",
     "refresh": "node scripts/fetch-data.mjs && npm run build",
     "og": "node scripts/build-og.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

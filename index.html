@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Raster fallbacks. Safari ignores the SVG for bookmarks, Start Page
+         favourites and iOS home-screen tiles, so it needs apple-touch-icon or
+         it falls back to a screenshot/letter tile. Regenerate with
+         `npm run icons`. -->
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/favicon-16.png" sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <!-- Light-only, matching highlightfactory.app — there is no night mode and
          no theme toggle, so nothing needs to be applied before paint. -->
     <meta name="color-scheme" content="light" />

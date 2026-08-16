@@ -22,6 +22,12 @@
  * as a share of the team's games. The leaders are per-game averages, so the
  * risk here is the one-game call-up with nine assists, not the low-minutes
  * regular — a games-played floor is enough.
+ *
+ * Deliberately looser than the *league* leaderboard's qualifier
+ * (`LEAGUE.leaderMinShare`, the NBA's own 58-of-82 rule). That one decides who
+ * is credited with leading the league and should match the league's; this one
+ * only decides which of thirteen team-mates gets a card, where excluding a
+ * regular who missed a month would read as a bug.
  */
 export const LEADER_MIN_GAME_SHARE = 0.3;
 

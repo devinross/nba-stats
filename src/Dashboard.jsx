@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { C, FONT_DISPLAY } from "./palette";
-import { LEAGUE } from "./league.js";
+import { LEAGUE, seasonLabel } from "./league.js";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
@@ -8,10 +8,16 @@ import {
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import SourceNote from "./SourceNote.jsx";
 import { sourceFor } from "./sources.js";
+import {
+  ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
+  DefendTable, DefendExplainer, baselineFor, POSITION_LABELS,
+} from "./PlayTypes.jsx";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
 const pct = (m, a) => (a > 0 ? r1((m / a) * 100) : 0);
+// Surname only, for chart legends where the full name would crowd the plot.
+const lastName = (name) => String(name).trim().split(" ").pop();
 
 function aggregate(p) {
   const L = p.logs, gp = L.length;
@@ -57,11 +63,19 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null, playerHref, season, teamId }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], leagueShotTypes = null, positionShotZones = null, positionShotTypes = null, playerHref, season, teamId }) {
   // Same footnote links as the Team tab — see src/sources.js.
   const seasonSource = sourceFor("roster", { season, teamId });
   const logSource = sourceFor("playerLog", { season, teamId });
   const zoneSource = sourceFor("playerShotZones", { season, teamId });
+  const typeSource = sourceFor("playerShotTypes", { season, teamId });
+  const defendSource = sourceFor("shotDefend", { season, teamId });
+
+  // league.json carries the shot-type buckets alongside the share of attempts
+  // the feed left unlabelled, which is what decides whether the split is worth
+  // showing straight or with a warning (see ShotTypeCaveat).
+  const leagueTypes = (leagueShotTypes && leagueShotTypes.buckets) || [];
+  const typeGeneric = leagueShotTypes && leagueShotTypes.generic;
 
   const player = roster[sel] || roster[0];
   const agg = useMemo(() => aggregate(player), [sel, roster]);
@@ -75,6 +89,13 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
   const baselineLabel = positionShotZones && positionShotZones[posGroup]?.length
     ? (posGroup === "G" ? "guards" : "forwards")
     : "lg";
+
+  // Shot types get their own baseline, split three ways rather than the zones'
+  // two: what a center is asked to shoot is nothing like what a guard is, and
+  // measuring him against a league average that is a third spot-up threes says
+  // little beyond "he is a center". Falls back to the league when his position
+  // is unlisted — see baselineFor.
+  const typeBaseline = baselineFor(player.pos, positionShotTypes, leagueTypes);
 
   const trend = useMemo(
     () => player.logs.map((l) => {
@@ -223,6 +244,60 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
               <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No zone shooting data for this player yet.</p>
             )}
             <SourceNote source={zoneSource} />
+          </section>
+
+          <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+              <h3 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>Shot types</h3>
+              <span style={{ fontSize: 11, color: C.MUTE }}>
+                how each shot was created · share of his attempts vs {typeBaseline.label === "lg" ? "the league" : typeBaseline.name}
+              </span>
+            </div>
+            <ShotTypeCaveat generic={typeGeneric} season={season} />
+            {player.shotTypes && player.shotTypes.length ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 22, alignItems: "start" }}>
+                <ShotTypeChart
+                  types={player.shotTypes}
+                  league={typeBaseline.types}
+                  label={lastName(player.name)}
+                  baseName={typeBaseline.label === "lg" ? LEAGUE.name : typeBaseline.name}
+                />
+                <div className="scroll-x" style={{ overflowX: "auto" }}>
+                  <ShotTypeTable types={player.shotTypes} league={typeBaseline.types} baselineLabel={typeBaseline.label} />
+                  <p style={{ fontSize: 12, color: C.MUTE, margin: "10px 2px 0", lineHeight: 1.5 }}>
+                    Measured against {typeBaseline.label === "lg" ? "the whole league" : `every ${LEAGUE.name} ${POSITION_LABELS[typeBaseline.label].replace(/s$/, "")}`}
+                    {typeBaseline.label === "lg"
+                      ? " — no position is listed for him, so there's no positional group to compare against."
+                      : ", not the whole league. A center's shot diet looks nothing like a guard's, so the league average would mostly just tell you his position."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No shot-type data for this player yet.</p>
+            )}
+            <SourceNote source={typeSource} />
+          </section>
+
+          <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+              <h3 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>Defensive matchups</h3>
+              <span style={{ fontSize: 11, color: C.MUTE }}>as the closest defender</span>
+            </div>
+            {player.shotDefend && player.shotDefend.length ? (
+              <>
+                <DefendExplainer />
+                <div className="scroll-x" style={{ overflowX: "auto" }}>
+                  <DefendTable rows={player.shotDefend} />
+                </div>
+              </>
+            ) : (
+              <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>
+                {Number(season) < LEAGUE.defendFirstSeason
+                  ? `Closest-defender tracking starts in ${seasonLabel(LEAGUE.defendFirstSeason)}, so there are no matchup numbers for ${seasonLabel(season)}.`
+                  : "No defensive matchup data for this player yet."}
+              </p>
+            )}
+            <SourceNote source={defendSource} />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>

@@ -9,6 +9,7 @@ import TeamBadge from "./TeamBadge.jsx";
 import { useSeasonIndex, useSeason, useTeam } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
+import LeagueView, { todayET } from "./LeagueView.jsx";
 import StaleNote from "./StaleNote.jsx";
 
 function Center({ children }) {
@@ -274,7 +275,7 @@ function SeasonPicker({ season, seasons, onChange, loading }) {
 
 // The team context strip under the site header: which team you're looking at,
 // which season, and its headline record.
-function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season, seasons, currentSeason, onPickSeason, seasonLoading, loading }) {
+function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season, seasons, currentSeason, onPickSeason, seasonLoading, loading, leagueHref, onLeague }) {
   const teamW = games.filter((g) => g.w).length;
   const teamL = games.length - teamW;
   // Record and games are the selected team's, which arrives after the season
@@ -296,10 +297,21 @@ function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season, sea
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <TeamBadge team={team} size={50} />
         <div>
-          <div className="hf-eyebrow" style={{ fontSize: 10, marginBottom: 2 }}>
-            {season ? `${seasonLabel(season)} ` : ""}{LEAGUE.name} Analytics
+          {/* Also the way back to the league page — the site header's logo goes
+              to the main site, so without this a team page is a dead end. */}
+          <a
+            className="hf-eyebrow"
+            href={leagueHref}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              onLeague();
+            }}
+            style={{ fontSize: 10, marginBottom: 2, display: "inline-block" }}
+          >
+            ‹ {season ? `${seasonLabel(season)} ` : ""}{LEAGUE.name} Analytics
             {season && currentSeason && Number(season) !== Number(currentSeason) ? " · final" : ""}
-          </div>
+          </a>
           <TeamPicker teams={teams} value={teamId} onChange={onPick} season={season} />
           <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
             {team.city}
@@ -326,6 +338,70 @@ function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season, sea
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Games</div>
           <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{stat(games.length)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The league page's counterpart to TeamBar: the season itself is the subject,
+// so there's no team to name and no team record to show — what a visitor wants
+// at the top is which season this is, how far into it the league is, and how
+// many games are on today.
+function LeagueBar({ season, seasons, currentSeason, onPickSeason, seasonLoading, updated, teams, standings, scoreboard }) {
+  const isCurrent = Number(season) === Number(currentSeason);
+  const played = standings.reduce((a, t) => a + t.gp, 0) / 2;
+  const today = todayET();
+  const todayGames = scoreboard.filter((g) => g.date === today).length;
+
+  return (
+    <div
+      className="hf-container"
+      style={{
+        paddingTop: 22,
+        paddingBottom: 18,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 14,
+      }}
+    >
+      <div>
+        <div className="hf-eyebrow" style={{ fontSize: 10, marginBottom: 2 }}>
+          {LEAGUE.name} Analytics{isCurrent ? "" : " · final"}
+        </div>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.1, margin: 0 }}>
+          {seasonLabel(season)} {LEAGUE.name} Stats
+          <span className="sr-only">
+            {" — "}standings, {isCurrent ? "today's games" : "results"}, league leaders and every team
+          </span>
+        </h1>
+        <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
+          Every team, one page{updated ? ` · updated ${updated}` : ""}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+        <SeasonPicker season={season} seasons={seasons} onChange={onPickSeason} loading={seasonLoading} />
+        {/* The tiles wrap as one group rather than individually, so a phone gets
+            a tidy row under the picker instead of two of them and an orphan. */}
+        <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
+          {isCurrent && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Today</div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>
+                {todayGames || <span style={{ color: C.MUTE }}>—</span>}
+              </div>
+            </div>
+          )}
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Teams</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{teams.length}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Games</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{played ? Math.round(played) : "—"}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -405,7 +481,7 @@ function SiteFooter({ updated }) {
             title={SITE.parentName}
             links={[
               ["Home", SITE.parentUrl],
-              ["NBA Stats", `${SITE.parentUrl}/pros/nba`],
+              ["WNBA Stats", SITE.wnbaUrl],
               ["Blog", `${SITE.parentUrl}/blog`],
               ["FAQ", `${SITE.parentUrl}/faq`],
             ]}
@@ -430,9 +506,15 @@ function SiteFooter({ updated }) {
 function Shell({ index, league, route, setRoute, seasonLoading }) {
   const currentSeason = index.currentSeason;
 
-  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, meta } = league;
+  const { teams, teamRanks, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins, meta } = league;
+  const {
+    standings = [], scoreboard = [], leaders = null,
+  } = league;
   const resolved = useMemo(() => resolveInSeason(route, league), [route, league]);
-  const team = teams.find((t) => t.id === resolved.teamId) || teams[0];
+  // No team in the URL means the league page — the season as a whole — rather
+  // than some arbitrary first team standing in for it.
+  const team = resolved.teamId ? teams.find((t) => t.id === resolved.teamId) || null : null;
+  const isLeague = !team;
   const tab = resolved.tab;
   const sel = resolved.sel;
 
@@ -444,11 +526,13 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const season = league.meta.season;
   const isCurrent = Number(season) === Number(currentSeason);
   const pending = Number(route.season) !== Number(season);
-  const teamState = useTeam(season, team.id, { current: isCurrent });
+  // Null on the league page: everything it draws is in league.json, so it never
+  // downloads a team file.
+  const teamState = useTeam(season, team ? team.id : null, { current: isCurrent });
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
-    lineups = [], upcoming = [], shotZones = null, errors = {},
+    lineups = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, errors = {},
   } = bundle;
   const teamLoading = teamState.loading || seasonLoading;
   const player = roster[sel] || null;
@@ -469,7 +553,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // --- navigation ---------------------------------------------------------
   // Player slugs come from league.json (team.players), so a player URL can be
   // built or read without that team's roster having arrived yet.
-  const playerSlugs = team.players || [];
+  const playerSlugs = (team && team.players) || [];
   const go = (next) => setRoute((r) => ({ ...r, ...next }));
 
   const pickTeam = (id) => {
@@ -478,7 +562,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   };
   const pickSeason = (nextSeason) => {
     // Stay on the same team when it existed that year; otherwise that season's
-    // landing, which resolves to its first team.
+    // league page.
     setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null });
   };
   const setTab = (nextTab) => {
@@ -493,10 +577,29 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const pathFor = (over) =>
     buildPath({ team, season, currentSeason, tab: over.tab, player: over.player });
   const path = buildPath({
-    team: route.teamSlug ? team : null,
+    team,
     season, currentSeason, tab,
     player: (playerSlugs[sel] || {}).slug,
   });
+
+  // --- links out of the league page ---------------------------------------
+  // It links to every team and to the players on its leaderboards, none of
+  // which is the team currently in the URL — so these build a path for a team
+  // passed in rather than for the selected one.
+  const hrefForTeam = (t) => buildPath({ team: t, season, currentSeason, tab: "team" });
+  const findPlayer = (teamId, name) => {
+    const t = teams.find((x) => x.id === teamId);
+    const p = t && (t.players || []).find((pl) => pl.name === name);
+    return p ? { team: t, player: p } : null;
+  };
+  const hrefForPlayer = (teamId, name) => {
+    const hit = findPlayer(teamId, name);
+    return hit ? buildPath({ team: hit.team, season, currentSeason, tab: "players", player: hit.player.slug }) : null;
+  };
+  const pickPlayer = (teamId, name) => {
+    const hit = findPlayer(teamId, name);
+    if (hit) go({ teamSlug: teamSlug(hit.team), playerSlug: hit.player.slug });
+  };
 
   // Real hrefs for the roster, so player pages are reachable by a crawler (and
   // openable in a new tab) rather than only by a click handler. The handlers
@@ -528,7 +631,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       window.history.pushState({}, "", path);
     }
     applyHead(pageMeta({
-      team: route.teamSlug ? team : null,
+      team,
       tab, player, season, path,
       archive: !isCurrent,
     }));
@@ -541,41 +644,59 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
       <SiteHeader />
 
-      <TeamBar
-        team={team}
-        teams={teams}
-        teamId={team.id}
-        onPick={pickTeam}
-        tab={tab}
-        games={games}
-        loading={teamLoading}
-        updated={updated}
-        season={route.season}
-        seasons={index.seasons}
-        currentSeason={currentSeason}
-        onPickSeason={pickSeason}
-        seasonLoading={pending || seasonLoading}
-      />
+      {isLeague ? (
+        <LeagueBar
+          season={route.season}
+          seasons={index.seasons}
+          currentSeason={currentSeason}
+          onPickSeason={pickSeason}
+          seasonLoading={pending || seasonLoading}
+          updated={updated}
+          teams={teams}
+          standings={standings}
+          scoreboard={scoreboard}
+        />
+      ) : (
+        <TeamBar
+          team={team}
+          teams={teams}
+          teamId={team.id}
+          onPick={pickTeam}
+          tab={tab}
+          games={games}
+          loading={teamLoading}
+          updated={updated}
+          season={route.season}
+          seasons={index.seasons}
+          currentSeason={currentSeason}
+          onPickSeason={pickSeason}
+          seasonLoading={pending || seasonLoading}
+          leagueHref={buildPath({ team: null, season, currentSeason })}
+          onLeague={() => go({ teamSlug: null, playerSlug: null })}
+        />
+      )}
 
-      <nav
-        className="hf-container"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          paddingBottom: 18,
-          borderBottom: `1px solid ${C.LINE}`,
-        }}
-      >
-        <TabButton active={tab === "team"} onClick={() => setTab("team")}>
-          Team
-        </TabButton>
-        <TabButton active={tab === "players"} onClick={() => setTab("players")}>
-          Players
-        </TabButton>
-      </nav>
+      {!isLeague && (
+        <nav
+          className="hf-container"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            paddingBottom: 18,
+            borderBottom: `1px solid ${C.LINE}`,
+          }}
+        >
+          <TabButton active={tab === "team"} onClick={() => setTab("team")}>
+            Team
+          </TabButton>
+          <TabButton active={tab === "players"} onClick={() => setTab("players")}>
+            Players
+          </TabButton>
+        </nav>
+      )}
 
-      {staleGames && (
+      {!isLeague && staleGames && (
         <div className="hf-container" style={{ paddingTop: 16 }}>
           <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 12, padding: "10px 14px" }}>
             <StaleNote stale={staleGames} style={{ margin: 0 }} />
@@ -583,7 +704,25 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </div>
       )}
 
-      {teamState.error ? (
+      {isLeague ? (
+        <LeagueView
+          key={`league:${season}`}
+          teams={teams}
+          standings={standings}
+          scoreboard={scoreboard}
+          leaders={leaders}
+          teamRanks={teamRanks}
+          teamZoneWins={teamZoneWins}
+          stale={league.stale || {}}
+          season={season}
+          seasonName={seasonLabel(season)}
+          final={!isCurrent}
+          teamHref={hrefForTeam}
+          playerHref={hrefForPlayer}
+          onPickTeam={pickTeam}
+          onPickPlayer={pickPlayer}
+        />
+      ) : teamState.error ? (
         <LoadFailure error={teamState.error} what={`${team.name}'s ${seasonLabel(season)} data`} />
       ) : teamLoading || !roster.length ? (
         <TeamLoading team={team} season={season} done={!teamLoading} />
@@ -605,7 +744,10 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           teamProfiles={teamProfiles}
           upcoming={upcoming}
           shotZones={shotZones}
+          shotTypes={shotTypes}
+          rotation={rotation}
           leagueShotZones={leagueShotZones}
+          leagueShotTypes={leagueShotTypes}
           teamZoneWins={teamZoneWins}
           playerHref={playerHrefByName}
           onPlayer={goToPlayerByName}
@@ -618,14 +760,17 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           sel={Math.min(sel, roster.length - 1)}
           setSel={setSel}
           leagueShotZones={leagueShotZones}
+          leagueShotTypes={leagueShotTypes}
           positionShotZones={positionShotZones}
+          positionShotTypes={positionShotTypes}
           playerHref={playerHref}
           season={season}
           teamId={team.id}
         />
       )}
 
-      <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />
+      {/* The league page already lists every team, as cards. */}
+      {!isLeague && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
 
       <SiteFooter updated={updated} />
     </div>
@@ -696,6 +841,8 @@ export default function App() {
   const season = route ? route.season : null;
   const seasonState = useSeason(season, {
     current: Number(season) === Number(currentSeason),
+    // The league page needs no team file, so it doesn't warm one up.
+    prefetchTeamId: route && !route.teamSlug ? null : undefined,
   });
 
   const error = index.error || seasonState.error;

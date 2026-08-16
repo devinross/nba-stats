@@ -73,7 +73,93 @@ export const LEAGUE = {
    * NBA's 48-minute basis for `PACE` and so reports ~97 for a 40-minute game.)
    */
   paceField: "PACE",
+
+  /**
+   * The clock, for the rotation grid: four 12-minute quarters. Overtime is
+   * counted in a player's minutes but has no column of its own, which is why
+   * these two are separate from "how long a game actually ran".
+   */
+  regulationMinutes: 48,
+  periodMinutes: 12,
+  periods: 4,
+
+  /**
+   * How many games a block of the rotation grid covers. An NBA regular season
+   * is 82 games, so 20 gives four blocks and a short fifth — close enough to
+   * "quarters of the season", which is the timescale a rotation changes on.
+   */
+  segmentGames: 20,
+
+  /**
+   * Share of a team's games a player must appear in before a per-game average
+   * counts as a league lead. The NBA's own leaderboard qualifier is 58 of 82,
+   * which is this share to within a game.
+   */
+  leaderMinShare: 0.7,
+
+  /**
+   * Teams per conference that make the postseason, counting the play-in: the
+   * line the standings table draws. Six seeds are automatic and 7-10 play in,
+   * so the meaningful cut for a standings table is 10.
+   */
+  playoffSpots: 10,
+
+  /**
+   * The first season with closest-defender tracking behind
+   * `leaguedashptdefend`. The NBA's goes back to 2013-14, comfortably before
+   * `oldestSeason`, so every season this site carries has matchup data — the
+   * field exists so the fetch script and the UI can say so in one place (the
+   * WNBA fork's tracking only starts in 2023).
+   */
+  defendFirstSeason: 2013,
 };
+
+/**
+ * Which conference a team plays in, by team id. Hardcoded rather than fetched:
+ * `leaguedashteamstats` doesn't carry it, and pulling `leaguestandingsv3` just
+ * for this would be a request for something that has not changed once in the
+ * seasons this site covers. The standings table is the only thing that reads
+ * it, and a team missing from the map simply lands in neither half.
+ *
+ * (The WNBA fork has nothing like this — that league seeds one table.)
+ */
+export const CONFERENCE = {
+  1610612737: "East", // Atlanta Hawks
+  1610612738: "East", // Boston Celtics
+  1610612751: "East", // Brooklyn Nets
+  1610612766: "East", // Charlotte Hornets
+  1610612741: "East", // Chicago Bulls
+  1610612739: "East", // Cleveland Cavaliers
+  1610612765: "East", // Detroit Pistons
+  1610612754: "East", // Indiana Pacers
+  1610612748: "East", // Miami Heat
+  1610612749: "East", // Milwaukee Bucks
+  1610612752: "East", // New York Knicks
+  1610612753: "East", // Orlando Magic
+  1610612755: "East", // Philadelphia 76ers
+  1610612761: "East", // Toronto Raptors
+  1610612764: "East", // Washington Wizards
+  1610612742: "West", // Dallas Mavericks
+  1610612743: "West", // Denver Nuggets
+  1610612744: "West", // Golden State Warriors
+  1610612745: "West", // Houston Rockets
+  1610612746: "West", // LA Clippers
+  1610612747: "West", // Los Angeles Lakers
+  1610612763: "West", // Memphis Grizzlies
+  1610612750: "West", // Minnesota Timberwolves
+  1610612740: "West", // New Orleans Pelicans
+  1610612760: "West", // Oklahoma City Thunder
+  1610612756: "West", // Phoenix Suns
+  1610612757: "West", // Portland Trail Blazers
+  1610612758: "West", // Sacramento Kings
+  1610612759: "West", // San Antonio Spurs
+  1610612762: "West", // Utah Jazz
+};
+
+/** "East" / "West", or null for a team the map doesn't know. */
+export function conferenceOf(teamId) {
+  return CONFERENCE[teamId] || null;
+}
 
 /** 2025 -> "2025-26". Handles the century roll: 1999 -> "1999-00". */
 export function seasonLabel(startYear) {

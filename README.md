@@ -1,10 +1,11 @@
 # NBA Analytics — setup guide
 
 A React dashboard for **all 30 NBA teams**, across **every season since
-2016-17**. Pick a team from the dropdown in the header (each shown with an
-emoji, e.g. "☘️ Celtics", "💜 Lakers") and a season from the dropdown beside it;
-each team has a **Team** tab and a **Players** tab, built from data pulled from
-**stats.nba.com**.
+2016-17**. The home page is the **league page** — the night's slate, both
+conferences' standings, the per-game leaders, and every team as a card. From
+there, pick a team (each shown with an emoji, e.g. "☘️ Celtics", "💜 Lakers")
+and a season from the dropdown beside it; each team has a **Team** tab and a
+**Players** tab, built from data pulled from **stats.nba.com**.
 
 The key idea: the website does **not** talk to stats.nba.com. Instead you run a
 small script that downloads the data and saves it as static files under
@@ -76,8 +77,9 @@ npm run fetch
 
 That downloads **the current season** — every team's games, box scores, on/off
 ratings, four factors, advanced player stats, league-wide ratings, lineups and
-shot zones. It makes ~99 requests (8 league-wide plus 3 per team) and takes
-about three minutes, printing the real status of each one:
+shot zones. It makes ~135 requests (14 league-wide plus 4 per team) and takes
+about four minutes, plus however long the rotation backfill runs, printing the
+real status of each one:
 
 ```
 Seasons: 2025-26  →  .../public/data
@@ -88,9 +90,12 @@ Seasons: 2025-26  →  .../public/data
 Already on disk from 2026-08-11T11:00:12.994Z — will back-fill anything that fails today.
 
 League-wide data for 2025-26:
-  • 2025-26 [1/9] team game log … 2460 rows · 1.3s
-  • 2025-26 [2/9] player game log … 26651 rows · 3.2s
-  • 2025-26 [3/9] ratings … 30 rows
+  • 2025-26 [1/11] team game log … 2460 rows · 1.3s
+  • 2025-26 [2/11] player game log … 26651 rows · 3.2s
+  • 2025-26 [3/11] ratings … 30 rows
+  ...
+  • 2025-26 [9/11] shotTypes … 219160 shots · 582 players · 22.5s
+  • 2025-26 [10/11] shotDefend … 581 defenders · 6/6 categories · 4.2s
   ...
 Per-team data for 2025-26 (roster · on/off · lineups) — 30 teams, 3 requests each:
   • 2025-26 [1/30] ☘️ Celtics … 82 games · 18 players · 0 upcoming · on/off ✓ · lineups ✓
@@ -118,6 +123,8 @@ npm run fetch -- --seasons 16-19    # a range of start years (short or full)
 npm run fetch -- --repair           # only the seasons with gaps in them
 npm run fetch -- --all              # every season from 2016-17 to now
 npm run fetch -- --out <dir>        # write somewhere other than public/data
+npm run fetch -- --no-rotations     # skip the per-game rotation backfill
+npm run fetch -- --rotation-limit 0 # no cap on rotations this run (see below)
 ```
 
 A season selector accepts either spelling: `2019-20` and `2019` mean the same
@@ -406,9 +413,9 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 
 The fetch script calls these stats.nba.com endpoints (LeagueID 00 = NBA) for
 every team, once per season, and transforms the responses into the files under
-`public/data/<season>/`. The game logs and the
-advanced team/player/four-factor dashboards are league-wide (one call each); the
-roster, on/off, and lineup endpoints are per-team (one call per team):
+`public/data/<season>/`. The game logs and the advanced team/player/four-factor
+dashboards are league-wide (one call each); the roster, on/off, lineup and shot-
+chart endpoints are per-team (one call per team); rotations are per game:
 
 - `leaguegamelog` (teams) - every team's games -> each game's score, the team
   list, and a team-id->abbreviation map for the league ranking chart.
@@ -429,8 +436,45 @@ roster, on/off, and lineup endpoints are per-team (one call per team):
   offensive rebounds, turnovers), powering the "profile vs the NBA" comparison.
 - `leaguedashteamstats` ("Four Factors") - team and opponent eFG%, turnover %,
   offensive-rebound % and FT rate.
+- `scheduleleaguev2` - the season schedule -> each team's upcoming games, and
+  the league-wide slate around today that the home page's scoreboard shows.
+  Filtered to regular-season game ids, since the feed also carries preseason,
+  All-Star and playoff games and every other dataset here is regular season.
+- `shotchartdetail` (`ContextMeasure=FGA`) - **one row per attempt**, with the
+  `ACTION_TYPE` label the shot-type breakdown is bucketed from. See the note
+  below: this one is fetched **per team**, not league-wide.
+- `leaguedashptdefend` (six categories) - closest-defender matchups: the FG%
+  shooters managed against each defender, and what those same shooters normally
+  shoot from there.
+- `gamerotation` - **one request per game**: every substitution's in/out clock
+  times, which the rotation grid is built from. See "Rotations" below.
 
-Both are taken as published rather than derived here — see "Nothing is
+The standings and the league leaderboard are **not** separate requests — both
+are rolled up from the team and player game logs already in memory, so the home
+page costs nothing extra to fetch.
+
+**Why the shot chart is per team.** `shotchartdetail` caps its response at
+**102,400 rows**, and an NBA season is around 218,000 attempts. Asking for the
+whole league at once (`TeamID=0`, which is what the WNBA fork does — its seasons
+are ~35,000 shots) returns a truncated season and no error saying so. Thirty
+per-team requests take about 25 seconds in total and return the lot.
+
+**Rotations.** `gamerotation` is per game, so a full season is 1,230 requests
+against an endpoint that answers in one of two regimes: ~150ms for a game its
+backend has warm, or almost exactly 30 seconds for one it doesn't (both return
+correct data). So every game is cached to its own file and never refetched, one
+retry rather than an escalating chain, and a per-run time budget after which the
+rest is left for tomorrow. A cold season fills in over a week or two of nightly
+runs; each run after that is a handful of new games.
+
+The cache lives in **`data-cache/rotations/<season>/`**, outside `public/` on
+purpose: the browser only reads the season aggregate that gets folded into each
+team's file, and a season of per-game files is ~5MB that would otherwise be
+deployed for nothing. It is committed, so the nightly job accumulates games
+instead of starting cold. `--no-rotations` skips the step entirely;
+`--rotation-limit N` raises or removes the per-run cap for a manual backfill.
+
+Both of the team dashboards are taken as published rather than derived here — see "Nothing is
 estimated" below.
 
 The `leaguedash*` endpoints are sent the full NBA filter set, including the
@@ -495,11 +539,15 @@ scripts/
                          the league constants it reads live in src/league.js)
   prerender.mjs         after `vite build`: one HTML page per team/player, every season, + sitemap.xml
   build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
+  build-icons.mjs       renders the brand mark -> the raster favicons Safari needs
+                        (run by hand: `npm run icons`; only after mark.svg changes)
   og-template.html      the artwork for the social share card
 public/
   data/index.json       which seasons exist, when each was fetched, what's missing
   data/<season>/league.json      that season's team list + league-wide charts
   data/<season>/teams/<id>.json  one file per team (its games, roster, on/off, lineups)
+data-cache/
+  rotations/<season>/<gameId>.json  per-game substitution logs (committed, never deployed)
 src/
   main.jsx              boots React
   league.js             EVERY difference from the WNBA fork: host, LeagueID, season
@@ -514,9 +562,14 @@ src/
   SourceNote.jsx        the "Source · nba.com > ..." footnote under every section
   BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
   useLeagueData.js      React hooks for the three loads: season index, season, team
+  qualify.js            the minimum-playing-time rules the player charts apply
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
+  LeagueView.jsx        the home page: slate, conference standings, leaders, all teams
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
+  RotationChart.jsx     the minute-by-minute rotation grid (Team tab)
+  PlayTypes.jsx         shot-type diet + defensive matchup tables (both tabs)
+  ShootingWinChart.jsx  shooting profile vs winning (shared by the team + league pages)
   StaleNote.jsx         the "showing the numbers from ..." note on carried-over sections
   index.css             brand tokens, typography, shared .hf-* classes
 ```

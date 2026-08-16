@@ -44,7 +44,10 @@ jobs:
         run: |
           git config user.name "nba-data-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data
+          # data-cache/ holds the per-game rotation files. They are not part of
+          # the published site, but committing them is what lets each nightly
+          # run add to the backfill instead of starting from nothing.
+          git add public/data data-cache
           if git diff --staged --quiet; then
             echo "No changes — nothing to commit."
           else

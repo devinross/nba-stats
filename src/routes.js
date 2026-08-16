@@ -97,11 +97,14 @@ export function parsePath(pathname, { seasons = [], currentSeason } = {}) {
 
 /**
  * Resolve the team/player halves of a parsed path against a loaded season.
- * Anything unrecognized falls back to that season's first team, so a stale or
- * hand-edited URL still renders the app instead of an error.
+ *
+ * A path with no team is the league page — the season as a whole — so it
+ * resolves to `teamId: null` rather than to some arbitrary first team. Anything
+ * unrecognized falls back to the same league page, so a stale or hand-edited URL
+ * still renders the app instead of an error.
  */
 export function resolveInSeason({ teamSlug: wantTeam, playerSlug: wantPlayer }, league) {
-  const fallback = { teamId: league.teams[0].id, tab: "team", sel: 0, matched: false };
+  const fallback = { teamId: null, tab: "team", sel: 0, matched: false };
   if (!wantTeam) return { ...fallback, matched: true };
 
   const team = league.teams.find((t) => teamSlug(t) === wantTeam);

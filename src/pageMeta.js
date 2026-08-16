@@ -65,21 +65,21 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
   if (archive && season) {
     return {
       canonical,
-      title: `${seasonLabel(season)} NBA Stats — Every Team's Season`,
+      title: `${seasonLabel(season)} NBA Standings & Season Stats`,
       description:
-        `The complete ${seasonLabel(season)} NBA season: team shot-zone charts, four factors, lineup net ` +
-        `ratings, on/off impact, league rankings and every player's game log.`,
-      ogTitle: `${seasonLabel(season)} NBA season stats`,
+        `The complete ${seasonLabel(season)} NBA season: final conference standings, per-game league ` +
+        `leaders, team shot-zone charts, four factors, lineup net ratings and every player's game log.`,
+      ogTitle: `${seasonLabel(season)} NBA season — standings and stats`,
     };
   }
 
   return {
     canonical,
-    title: "NBA Stats — Shot Charts & Four Factors | Highlight Factory",
+    title: "NBA Standings, Scores & Team Stats | Highlight Factory",
     description:
-      "Free NBA team and player analytics: shot-zone charts, four factors, lineup net ratings, " +
-      "on/off impact and league-wide rankings for all 30 teams. Updated nightly.",
-    ogTitle: "NBA Stats — Shot Charts, Four Factors & Lineups",
+      "Today's NBA games, the full conference standings, per-game leaders and every team's shot-zone " +
+      "charts, four factors, lineup net ratings and on/off impact. Updated nightly.",
+    ogTitle: "NBA Standings, Today's Games & Team Stats",
   };
 }
 

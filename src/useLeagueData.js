@@ -37,12 +37,18 @@ export function useSeasonIndex() {
 /**
  * One season's league-wide data. Also kicks off a background fetch for the team
  * the page is about, so switching seasons doesn't wait on two round trips.
+ *
+ * Pass `prefetchTeamId: null` for a page that isn't about a team — the league
+ * page draws entirely from league.json, and speculatively pulling the first
+ * team's ~150KB file there would be the biggest download on the page and go
+ * unused.
  */
 export function useSeason(season, { current, prefetchTeamId } = {}) {
   return useAsync(
     () =>
       loadSeason(season, { current }).then((data) => {
-        const first = prefetchTeamId ?? (data.teams[0] && data.teams[0].id);
+        const first =
+          prefetchTeamId === null ? null : prefetchTeamId ?? (data.teams[0] && data.teams[0].id);
         if (first != null) prefetchTeam(season, first, { current });
         return data;
       }),
