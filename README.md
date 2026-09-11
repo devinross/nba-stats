@@ -314,6 +314,15 @@ host needs the SPA fallback described in step 5.
   for a frame — but a crawler that doesn't run JavaScript still gets the
   substance and, importantly, links to follow. It also writes `dist/sitemap.xml`
   and fails the build if the page count and the sitemap ever disagree.
+- **`scripts/indexnow.mjs`** runs last in `npm run build`. On a Vercel
+  production build it diffs the new `dist/sitemap.xml` against the one live on
+  the site and pings [IndexNow](https://www.indexnow.org) with every URL that's
+  new or whose `<lastmod>` moved, so Bing, Yandex and the other participating
+  engines pick up the nightly numbers without waiting to re-read the sitemap.
+  Google doesn't take part. Local and preview builds skip the ping;
+  `node scripts/indexnow.mjs --dry-run` shows what a deploy would send. The key
+  is public by design (engines verify it by fetching `public/<key>.txt`), so to
+  rotate it, rename that file, change its contents and `INDEXNOW_KEY` together.
 - **Internal links.** The sitemap alone isn't enough — pages need to link to
   each other. The team `<select>` isn't crawlable, so there's an "All teams" nav
   above the footer, and the roster rail and the advanced-stats table use real
@@ -553,6 +562,7 @@ scripts/
                         (anything that fails is carried over from what's on disk;
                          the league constants it reads live in src/league.js)
   prerender.mjs         after `vite build`: one HTML page per team/player, every season, + sitemap.xml
+  indexnow.mjs          after prerender: pings IndexNow with the URLs this deploy changed (production only)
   build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
   build-icons.mjs       renders the brand mark -> the raster favicons Safari needs
                         (run by hand: `npm run icons`; only after mark.svg changes)

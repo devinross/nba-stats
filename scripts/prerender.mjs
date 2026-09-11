@@ -485,9 +485,22 @@ function replaceOnce(html, pattern, replacement, label) {
   return html.replace(pattern, () => replacement);
 }
 
+// path -> description, filled by buildPage and checked once at the end.
+const descriptions = new Map();
+
 function buildPage({ team, player, path, tab }) {
   const meta = pageMeta({ team, tab, player, season, path, archive: isArchive });
   let html = template;
+
+  // The description is what a search result prints under the title, so every
+  // page needs its own. Checked rather than trusted: a new branch in pageMeta
+  // that returns none would otherwise ship silently, and replaceOnce below
+  // would happily write an empty content="".
+  if (!String(meta.description || "").trim()) {
+    console.error(`prerender: pageMeta returned no description for ${path}.`);
+    process.exit(1);
+  }
+  descriptions.set(path, meta.description.trim());
 
   html = replaceOnce(html, /<title>[\s\S]*?<\/title>/, `<title>${esc(meta.title)}</title>`, "<title>");
   html = replaceOnce(
@@ -595,6 +608,32 @@ function renderSeason(year) {
 }
 
 const rendered = seasonList.map(renderSeason);
+
+// --- description audit -----------------------------------------------------
+
+// Two URLs describing themselves identically is how near-duplicate pages get
+// collapsed in an index, so a shared description fails the build. Length is
+// only a warning: it costs nothing but a truncated snippet.
+const seenDescription = new Map();
+for (const [path, description] of descriptions) {
+  const first = seenDescription.get(description);
+  if (first) {
+    console.error(`prerender: ${path} and ${first} share a meta description.`);
+    process.exit(1);
+  }
+  seenDescription.set(description, path);
+}
+
+const DESCRIPTION_MAX = 160;
+const overlong = [...descriptions].filter(([, d]) => d.length > DESCRIPTION_MAX);
+if (overlong.length) {
+  const longest = overlong.reduce((a, b) => (b[1].length > a[1].length ? b : a));
+  console.warn(
+    `prerender: ${overlong.length} of ${descriptions.size} descriptions run past ` +
+      `${DESCRIPTION_MAX} characters and may be truncated in results — ` +
+      `longest is ${longest[1].length} on ${longest[0]}.`
+  );
+}
 
 // --- sitemap ---------------------------------------------------------------
 
