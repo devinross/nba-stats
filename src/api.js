@@ -71,6 +71,17 @@ export function loadTeam(season, teamId, { current = false } = {}) {
 }
 
 /**
+ * Every season's league file, for the trends page. Ten-odd files of ~30KB, all
+ * but one immutable and HTTP-cached, and each lands in the same in-memory cache
+ * the season pages read — so a season you've already visited costs nothing.
+ */
+export function loadAllSeasons(seasons, currentSeason) {
+  return Promise.all(
+    seasons.map((season) => loadSeason(season, { current: Number(season) === Number(currentSeason) }))
+  );
+}
+
+/**
  * Warm the cache for a team without waiting on it — used when the season loads,
  * so the team the page is about is usually already there by the time it renders.
  * Failures are ignored here; the real load reports them.

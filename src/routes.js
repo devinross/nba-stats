@@ -4,6 +4,7 @@
 //   /                                         current season, league landing
 //   /team/boston-celtics                      a team's Team tab
 //   /team/boston-celtics/jayson-tatum         a player's Players tab
+//   /trends                                   every season at once, each team-season a dot
 //   /2023-24                                  a past season's landing
 //   /2023-24/team/boston-celtics              that team, that season
 //   /2023-24/team/boston-celtics/jayson-tatum
@@ -35,6 +36,9 @@ export function slugify(value) {
 
 export const teamSlug = (team) => slugify(team.name);
 
+/** The season-less pages: the trends page, which is every season at once. */
+export const VIEWS = new Set(["trends"]);
+
 /**
  * Slugs for a roster, aligned to its indices. Two players on one roster could
  * in principle slugify the same (a "Jr." suffix stripped, say), so repeats get
@@ -60,9 +64,15 @@ export function seasonPrefix(season, currentSeason) {
   return Number(season) === Number(currentSeason) ? "" : `/${seasonLabel(season)}`;
 }
 
-/** The canonical path for a piece of app state. */
-export function buildPath({ team, tab, player, season, currentSeason }) {
+/**
+ * The canonical path for a piece of app state.
+ *
+ * `view` names the pages that aren't about a team or a single season — /trends
+ * — so they live at bare paths with no season prefix.
+ */
+export function buildPath({ team, tab, player, season, currentSeason, view }) {
   const prefix = seasonPrefix(season, currentSeason);
+  if (view) return `/${view}`;
   if (!team) return prefix || "/";
   const base = `${prefix}/team/${teamSlug(team)}`;
   if (tab === "players" && player) return `${base}/${player}`;
@@ -70,7 +80,7 @@ export function buildPath({ team, tab, player, season, currentSeason }) {
 }
 
 /**
- * pathname -> { season, teamSlug, playerSlug }. Pure string work: it runs
+ * pathname -> { season, teamSlug, playerSlug, view }. Pure string work: it runs
  * before any data has loaded, which is what lets the app fetch only the season
  * and team the URL actually asks for.
  *
@@ -82,17 +92,23 @@ export function parsePath(pathname, { seasons = [], currentSeason } = {}) {
   const parts = String(pathname || "/").split("/").filter(Boolean);
   const known = new Set(seasons.map(Number));
 
+  // Season-less (see buildPath), so read before the season prefix is —
+  // "/2023-24/trends" is not a page.
+  if (parts.length === 1 && VIEWS.has(parts[0])) {
+    return { season: currentSeason, teamSlug: null, playerSlug: null, view: parts[0], matched: true };
+  }
+
   let season = currentSeason;
   const leading = parts.length ? parseSeasonLabel(parts[0]) : null;
   if (leading != null) {
-    if (!known.has(leading)) return { season: currentSeason, teamSlug: null, playerSlug: null, matched: false };
+    if (!known.has(leading)) return { season: currentSeason, teamSlug: null, playerSlug: null, view: null, matched: false };
     season = leading;
     parts.shift();
   }
 
-  if (!parts.length) return { season, teamSlug: null, playerSlug: null, matched: true };
-  if (parts[0] !== "team" || !parts[1]) return { season, teamSlug: null, playerSlug: null, matched: false };
-  return { season, teamSlug: parts[1], playerSlug: parts[2] || null, matched: true };
+  if (!parts.length) return { season, teamSlug: null, playerSlug: null, view: null, matched: true };
+  if (parts[0] !== "team" || !parts[1]) return { season, teamSlug: null, playerSlug: null, view: null, matched: false };
+  return { season, teamSlug: parts[1], playerSlug: parts[2] || null, view: null, matched: true };
 }
 
 /**

@@ -24,18 +24,29 @@ export function positionLabel(pos) {
 
 /**
  * Metadata for one route.
- *   { team, tab, player, season, path, archive }
+ *   { team, tab, player, season, path, archive, view }
  * `player` is the roster entry (for the player pages), `path` the canonical
  * pathname from routes.js, and `archive` marks a season that has finished — its
  * landing page is about that year rather than about the league today. Titles
  * are kept near 60 characters and descriptions near 155 so neither gets
  * truncated in results.
  */
-export function pageMeta({ team, tab, player, season, path = "/", archive = false }) {
+export function pageMeta({ team, tab, player, season, path = "/", archive = false, view = null }) {
   // "2023-24 " — the season as a reader writes it, with the trailing space the
   // templates below assume. Empty when there is no season to name.
   const yr = season ? `${seasonLabel(season)} ` : "";
   const canonical = SITE_URL + (path === "/" ? "/" : path);
+
+  if (view === "trends") {
+    return {
+      canonical,
+      title: `NBA Trends — Shooting & Ratings Across Seasons`,
+      description:
+        `Every NBA team in every season on one chart: shot profile by zone against win %, and ` +
+        `offensive vs defensive rating, with each season's correlation to winning.`,
+      ogTitle: `NBA trends — every team-season on one chart`,
+    };
+  }
 
   if (player && tab === "players" && team) {
     const role = positionLabel(player.pos);

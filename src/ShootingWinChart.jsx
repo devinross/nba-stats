@@ -32,7 +32,8 @@ const BASE_ZONE_KEYS = ["ra", "paint", "mid", "lc3", "rc3", "atb3"];
 
 // A team's metric for a zone: FG% (efficiency) or that zone's share of all the
 // team's shot attempts (volume), as a percentage. Null when there are no shots.
-function zoneMetric(zones, parts, mode) {
+// Exported for the trends page, which plots the same metric for every season.
+export function zoneMetric(zones, parts, mode) {
   const map = new Map((zones || []).map((z) => [z.z, z]));
   let m = 0, a = 0;
   for (const k of parts) { const z = map.get(k); if (z) { m += z.m; a += z.a; } }
@@ -40,6 +41,27 @@ function zoneMetric(zones, parts, mode) {
   let tot = 0;
   for (const k of BASE_ZONE_KEYS) { const z = map.get(k); if (z) tot += z.a; }
   return tot > 0 ? r1((a / tot) * 100) : null;
+}
+
+// Least-squares trend line + Pearson correlation over {x, y} points, to show
+// how strongly the chosen shooting metric tracks with winning. Both are null
+// with fewer than two points or no spread on either axis.
+export function fitTrend(pts) {
+  let r = null, seg = null;
+  const n = pts.length;
+  if (n >= 2) {
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+    const xb = xs.reduce((a, b) => a + b, 0) / n, yb = ys.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let i = 0; i < n; i++) { const dx = xs[i] - xb, dy = ys[i] - yb; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+    if (sxx > 0 && syy > 0) {
+      r = sxy / Math.sqrt(sxx * syy);
+      const slope = sxy / sxx, int = yb - slope * xb;
+      const xmin = Math.min(...xs), xmax = Math.max(...xs);
+      seg = [{ x: xmin, y: r1(slope * xmin + int) }, { x: xmax, y: r1(slope * xmax + int) }];
+    }
+  }
+  return { r, seg };
 }
 
 export function MetricButton({ active, onClick, children }) {
@@ -99,22 +121,7 @@ export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
         isSelected: teamId != null && t.teamId === teamId,
       }))
       .filter((p) => p.x != null);
-    // Least-squares trend line + Pearson correlation, to show how strongly the
-    // chosen shooting metric tracks with winning across the league.
-    let r = null, seg = null;
-    const n = pts.length;
-    if (n >= 2) {
-      const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
-      const xb = xs.reduce((a, b) => a + b, 0) / n, yb = ys.reduce((a, b) => a + b, 0) / n;
-      let sxy = 0, sxx = 0, syy = 0;
-      for (let i = 0; i < n; i++) { const dx = xs[i] - xb, dy = ys[i] - yb; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
-      if (sxx > 0 && syy > 0) {
-        r = sxy / Math.sqrt(sxx * syy);
-        const slope = sxy / sxx, int = yb - slope * xb;
-        const xmin = Math.min(...xs), xmax = Math.max(...xs);
-        seg = [{ x: xmin, y: r1(slope * xmin + int) }, { x: xmax, y: r1(slope * xmax + int) }];
-      }
-    }
+    const { r, seg } = fitTrend(pts);
     return { pts, zoneDef, r, seg, unit: mode === "eff" ? "FG%" : "shot share" };
   }, [teamZoneWins, zone, mode, teamId]);
 

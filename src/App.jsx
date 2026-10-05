@@ -6,10 +6,11 @@ import { LEAGUE, seasonLabel } from "./league.js";
 import { pageMeta, applyHead } from "./pageMeta.js";
 import BrandMark from "./BrandMark.jsx";
 import TeamBadge from "./TeamBadge.jsx";
-import { useSeasonIndex, useSeason, useTeam } from "./useLeagueData";
+import { useSeasonIndex, useSeason, useTeam, useAllSeasons } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
 import LeagueView, { todayET } from "./LeagueView.jsx";
+import TrendsView from "./TrendsView.jsx";
 import StaleNote from "./StaleNote.jsx";
 
 function Center({ children }) {
@@ -231,7 +232,11 @@ function SiteHeader() {
 // to the current value, with a transparent native <select> laid over it, so the
 // capsule stays narrow instead of sizing to the longest option and the control
 // keeps real keyboard and screen-reader behaviour.
+//
+// The last option, "All seasons", is the trends page; there `season` is the
+// string "trends". onChange is handed a season number or "trends".
 function SeasonPicker({ season, seasons, onChange, loading }) {
+  const isTrends = season === "trends";
   if (!seasons || seasons.length < 2) return null;
   return (
     <div
@@ -250,12 +255,12 @@ function SeasonPicker({ season, seasons, onChange, loading }) {
         Season
       </span>
       <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, lineHeight: 1, opacity: loading ? 0.5 : 1 }}>
-        {seasonLabel(season)}
+        {isTrends ? "All · trends" : seasonLabel(season)}
       </span>
       <span aria-hidden="true" style={{ color: C.BRAND, fontSize: 12, lineHeight: 1 }}>▾</span>
       <select
         value={season}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => onChange(e.target.value === "trends" ? "trends" : Number(e.target.value))}
         aria-label="Select season"
         style={{
           position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0,
@@ -268,6 +273,9 @@ function SeasonPicker({ season, seasons, onChange, loading }) {
             {seasonLabel(s.season)}
           </option>
         ))}
+        <option value="trends" style={{ color: "#111", fontWeight: 600 }}>
+          All seasons · trends
+        </option>
       </select>
     </div>
   );
@@ -408,6 +416,49 @@ function LeagueBar({ season, seasons, currentSeason, onPickSeason, seasonLoading
   );
 }
 
+// The trends page's context strip: every season at once, so the picker reads
+// "All" and picking a season from it goes to that season's league page.
+function TrendsBar({ seasons, onPickSeason, updated, loading }) {
+  const years = seasons.map((s) => Number(s.season));
+  const first = seasonLabel(Math.min(...years)), last = seasonLabel(Math.max(...years));
+  return (
+    <div
+      className="hf-container"
+      style={{ paddingTop: 22, paddingBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}
+    >
+      <div>
+        <div className="hf-eyebrow" style={{ fontSize: 10, marginBottom: 2 }}>
+          {LEAGUE.name} Analytics · {first} to {last}
+        </div>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.1, margin: 0 }}>
+          {LEAGUE.name} Trends
+          <span className="sr-only">
+            {" — "}shooting profile vs winning and offense vs defense for every team, {first} to {last}
+          </span>
+        </h1>
+        <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
+          Every team-season, one chart{updated ? ` · updated ${updated}` : ""}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+        <SeasonPicker season="trends" seasons={seasons} onChange={onPickSeason} loading={loading} />
+        <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Seasons</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{seasons.length}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Team-seasons</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>
+              {seasons.reduce((a, s) => a + (s.teams || 0), 0)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FooterCol({ title, links }) {
   return (
     <div>
@@ -489,6 +540,7 @@ function SiteFooter({ updated }) {
           <FooterCol
             title="This site"
             links={[
+              ["Multi-season trends", "/trends"],
               ["Get the app", SITE.appStoreUrl],
               ["Contact", `mailto:${SITE.contactEmail}`],
             ]}
@@ -514,7 +566,9 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // No team in the URL means the league page — the season as a whole — rather
   // than some arbitrary first team standing in for it.
   const team = resolved.teamId ? teams.find((t) => t.id === resolved.teamId) || null : null;
-  const isLeague = !team;
+  // Every season at once — teamless, and reads every league.json.
+  const isTrends = route.view === "trends";
+  const isLeague = !team && !isTrends;
   const tab = resolved.tab;
   const sel = resolved.sel;
 
@@ -529,6 +583,8 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // Null on the league page: everything it draws is in league.json, so it never
   // downloads a team file.
   const teamState = useTeam(season, team ? team.id : null, { current: isCurrent });
+  const seasonYears = useMemo(() => index.seasons.map((s) => Number(s.season)), [index.seasons]);
+  const trendsState = useAllSeasons(seasonYears, currentSeason, { enabled: isTrends });
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
@@ -558,12 +614,14 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
 
   const pickTeam = (id) => {
     const t = teams.find((x) => x.id === id);
-    if (t) go({ teamSlug: teamSlug(t), playerSlug: null });
+    if (t) go({ teamSlug: teamSlug(t), playerSlug: null, view: null });
   };
+  const goView = (view) => setRoute({ season: currentSeason, teamSlug: null, playerSlug: null, view });
   const pickSeason = (nextSeason) => {
+    if (nextSeason === "trends") return goView("trends");
     // Stay on the same team when it existed that year; otherwise that season's
     // league page.
-    setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null });
+    setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null, view: null });
   };
   const setTab = (nextTab) => {
     if (nextTab === "team") return go({ playerSlug: null });
@@ -578,6 +636,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     buildPath({ team, season, currentSeason, tab: over.tab, player: over.player });
   const path = buildPath({
     team,
+    view: route.view,
     season, currentSeason, tab,
     player: (playerSlugs[sel] || {}).slug,
   });
@@ -598,7 +657,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   };
   const pickPlayer = (teamId, name) => {
     const hit = findPlayer(teamId, name);
-    if (hit) go({ teamSlug: teamSlug(hit.team), playerSlug: hit.player.slug });
+    if (hit) go({ teamSlug: teamSlug(hit.team), playerSlug: hit.player.slug, view: null });
   };
 
   // Real hrefs for the roster, so player pages are reachable by a crawler (and
@@ -634,6 +693,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       team,
       tab, player, season, path,
       archive: !isCurrent,
+      view: route.view,
     }));
     // `player` is in the deps because the roster arrives after the URL does:
     // on a deep link into a player page the first pass has no roster yet and
@@ -644,7 +704,14 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
       <SiteHeader />
 
-      {isLeague ? (
+      {isTrends ? (
+        <TrendsBar
+          seasons={index.seasons}
+          onPickSeason={pickSeason}
+          updated={updated}
+          loading={trendsState.loading}
+        />
+      ) : isLeague ? (
         <LeagueBar
           season={route.season}
           seasons={index.seasons}
@@ -672,11 +739,11 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           onPickSeason={pickSeason}
           seasonLoading={pending || seasonLoading}
           leagueHref={buildPath({ team: null, season, currentSeason })}
-          onLeague={() => go({ teamSlug: null, playerSlug: null })}
+          onLeague={() => go({ teamSlug: null, playerSlug: null, view: null })}
         />
       )}
 
-      {!isLeague && (
+      {!isLeague && !isTrends && (
         <nav
           className="hf-container"
           style={{
@@ -696,7 +763,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </nav>
       )}
 
-      {!isLeague && staleGames && (
+      {!isLeague && !isTrends && staleGames && (
         <div className="hf-container" style={{ paddingTop: 16 }}>
           <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 12, padding: "10px 14px" }}>
             <StaleNote stale={staleGames} style={{ margin: 0 }} />
@@ -704,7 +771,19 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </div>
       )}
 
-      {isLeague ? (
+      {isTrends ? (
+        trendsState.error ? (
+          <LoadFailure error={trendsState.error} what="every season's data" />
+        ) : !trendsState.data ? (
+          <div className="hf-container" style={{ padding: "60px 24px", textAlign: "center", color: C.MUTE }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 16, color: C.BRAND }}>
+              Loading {index.seasons.length} seasons…
+            </div>
+          </div>
+        ) : (
+          <TrendsView leagues={trendsState.data} currentSeason={currentSeason} />
+        )
+      ) : isLeague ? (
         <LeagueView
           key={`league:${season}`}
           teams={teams}
@@ -721,6 +800,8 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           playerHref={hrefForPlayer}
           onPickTeam={pickTeam}
           onPickPlayer={pickPlayer}
+          trendsHref={buildPath({ view: "trends" })}
+          onTool={goView}
         />
       ) : teamState.error ? (
         <LoadFailure error={teamState.error} what={`${team.name}'s ${seasonLabel(season)} data`} />
@@ -770,7 +851,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       )}
 
       {/* The league page already lists every team, as cards. */}
-      {!isLeague && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
+      {!isLeague && !isTrends && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
 
       <SiteFooter updated={updated} />
     </div>

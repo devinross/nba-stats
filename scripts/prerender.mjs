@@ -295,6 +295,32 @@ function homeShell() {
       <p><a href="${PARENT_URL}">Highlight Factory</a> is the modern basketball film tool, powered with AI.</p>`;
 }
 
+const trendsPath = () => "/trends";
+
+/**
+ * The trends page's shell: what it plots, and links into every season it
+ * plots. Built during the live season's pass, but it reads only index.json.
+ */
+function trendsShell() {
+  const years = index.seasons.map((s) => Number(s.season)).sort((a, b) => b - a);
+  const first = seasonLabel(years[years.length - 1]), last = seasonLabel(years[0]);
+  const teamSeasons = index.seasons.reduce((a, s) => a + (s.teams || 0), 0);
+  const seasonLinks = years
+    .map((y) => `<li><a href="${seasonPrefix(y, currentSeason) || "/"}">${seasonLabel(y)} ${LEAGUE.name} season</a></li>`)
+    .join("");
+  return `<h1>${LEAGUE.name} Trends, ${first} to ${last}</h1>
+      <p>Every ${LEAGUE.name} team in every season from ${first} to ${last} — ${teamSeasons} team-seasons — plotted on the same charts, so a team can be compared with every other team in league history we have, not only the teams it played that year.</p>
+      <h2>What this covers</h2>
+      <ul>
+        <li>Shooting profile vs winning — each team-season's restricted-area, paint, mid-range and three-point accuracy or shot share against its win percentage, with the trend line and correlation across all of them.</li>
+        <li>Correlation by season — how strongly each zone has tracked with winning, one season at a time.</li>
+        <li>Offense vs defense — every team-season's offensive and defensive rating, raw or relative to that season's league average.</li>
+        <li>Follow a franchise — trace one team's path across seasons.</li>
+      </ul>
+      <h2>Seasons</h2>
+      <ul>${seasonLinks}</ul>`;
+}
+
 function teamShell(team) {
   const s = teamSummary(team);
   const b = league.data[team.id] || {};
@@ -388,7 +414,37 @@ function breadcrumbs(trail) {
   };
 }
 
-function jsonLdFor({ team, player, path }) {
+function jsonLdFor({ team, player, path, view }) {
+  if (view === "trends") {
+    const years = index.seasons.map((s) => Number(s.season));
+    return {
+      "@context": "https://schema.org",
+      "@graph": [
+        organization,
+        {
+          "@type": "Dataset",
+          "@id": SITE_URL + path + "#dataset",
+          name: `${LEAGUE.name} team shooting and ratings trends by season`,
+          description:
+            `Every ${LEAGUE.name} team-season's shot profile by zone, win percentage and offensive and defensive rating, ` +
+            "compared across seasons.",
+          url: SITE_URL + path,
+          license: "https://www.nba.com/termsofuse",
+          isAccessibleForFree: true,
+          dateModified: updatedISO,
+          // An ISO 8601 interval from the first season's start to the last's end.
+          temporalCoverage: `${Math.min(...years)}/${Math.max(...years) + 1}`,
+          creator: { "@id": `${PARENT_URL}/#organization` },
+          keywords: [`${LEAGUE.name} trends`, `${LEAGUE.name} shooting`, "offensive rating", "defensive rating", "basketball analytics"],
+        },
+        breadcrumbs([
+          { name: `${seasonLabel(season)} ${LEAGUE.name} Stats`, path: homePath() },
+          { name: "Trends", path },
+        ]),
+      ],
+    };
+  }
+
   if (player && team) {
     return {
       "@context": "https://schema.org",
@@ -488,8 +544,8 @@ function replaceOnce(html, pattern, replacement, label) {
 // path -> description, filled by buildPage and checked once at the end.
 const descriptions = new Map();
 
-function buildPage({ team, player, path, tab }) {
-  const meta = pageMeta({ team, tab, player, season, path, archive: isArchive });
+function buildPage({ team, player, path, tab, view }) {
+  const meta = pageMeta({ team, tab, player, season, path, archive: isArchive, view });
   let html = template;
 
   // The description is what a search result prints under the title, so every
@@ -540,7 +596,11 @@ function buildPage({ team, player, path, tab }) {
     "og:image"
   );
 
-  const shell = player ? playerShell(team, player) : team ? teamShell(team) : homeShell();
+  const shell =
+    view === "trends" ? trendsShell()
+    : player ? playerShell(team, player)
+    : team ? teamShell(team)
+    : homeShell();
   html = replaceOnce(
     html,
     /<div id="root"><\/div>/,
@@ -550,7 +610,7 @@ function buildPage({ team, player, path, tab }) {
 
   html = html.replace(
     "</head>",
-    `  <script type="application/ld+json">${JSON.stringify(jsonLdFor({ team, player, path }))}</script>\n  </head>`
+    `  <script type="application/ld+json">${JSON.stringify(jsonLdFor({ team, player, path, view }))}</script>\n  </head>`
   );
 
   return html;
@@ -587,6 +647,13 @@ function renderSeason(year) {
 
   writePage(homePath(), buildPage({ path: homePath() }));
   count++;
+
+  // Every season at once, so it's written once — on the live season's pass.
+  if (!isArchive) {
+    writePage(trendsPath(), buildPage({ path: trendsPath(), view: "trends" }));
+    routes.push(trendsPath());
+    count++;
+  }
 
   for (const team of league.teams) {
     const tPath = teamPathOf(team);
@@ -651,6 +718,7 @@ const priorityFor = (route) => {
   const archive = seasonOf(route) != null;
   const depth = route.split("/").filter(Boolean).length;
   if (route === "/") return "1.0";
+  if (route === "/trends") return "0.9";
   if (archive) return depth <= 1 ? "0.6" : "0.4";
   return depth === 2 ? "0.8" : "0.6";
 };

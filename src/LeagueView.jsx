@@ -564,6 +564,25 @@ function LandscapeTooltip({ active, payload }) {
 
 // ----- the page -------------------------------------------------------------
 
+// "Every season →" in a section's hint: the way into /trends from the two
+// charts it repeats across seasons.
+function TrendsLink({ href, onGo }) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        onGo("trends");
+      }}
+      style={{ color: C.BRAND, fontWeight: 700, marginLeft: 8 }}
+    >
+      Every season →
+    </a>
+  );
+}
+
 export default function LeagueView({
   teams = [],
   standings = [],
@@ -575,6 +594,8 @@ export default function LeagueView({
   playerHref,
   onPickTeam,
   onPickPlayer,
+  trendsHref,
+  onTool,
   stale = {},
   season,
   seasonName,
@@ -713,7 +734,7 @@ export default function LeagueView({
       {landscape.length > 0 && (
         <Section
           title="Offense vs defense"
-          hint="each team by its two ratings · up and to the right is better"
+          hint={<>each team by its two ratings · up and to the right is better<TrendsLink href={trendsHref} onGo={onTool} /></>}
           stale={stale.teamRanks}
           source={src("teamRanks")}
         >
@@ -753,7 +774,7 @@ export default function LeagueView({
       {teamZoneWins.length > 0 && (
         <Section
           title="Shooting profile vs winning"
-          hint="each dot = a team"
+          hint={<>each dot = a team<TrendsLink href={trendsHref} onGo={onTool} /></>}
           stale={stale.teamZoneWins}
           source={src("teamZoneWins")}
         >
