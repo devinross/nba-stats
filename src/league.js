@@ -58,7 +58,7 @@ export const LEAGUE = {
    * a season with no games would open the site on an empty page. The fetcher
    * says so plainly if the season it's asked for hasn't started yet.
    */
-  currentSeason: 2025,
+  currentSeason: 2026,
   /**
    * How far back --missing / --repair / --all reach. Every endpoint the site
    * uses goes back to 1996-97 if you ever want more history; budget about four
