@@ -9,6 +9,10 @@ REPO="$HOME/source-code/nba-analytics"
 LOG="$HOME/Library/Logs/nba-refresh.log"
 # Vercel deploys production from master, so that's where the data has to land.
 BRANCH="master"
+# What the nightly commit contains. data-cache/ holds the per-game rotation
+# files: they aren't deployed, but committing them is what lets each night add
+# to the backfill instead of starting from nothing.
+DATA_PATHS=(public/data data-cache)
 
 # Make node/npm/git findable from launchd's bare environment.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -60,17 +64,15 @@ try {
 ")"
 
 if [ "$teams" -gt 0 ]; then
-  # data-cache/ holds the per-game rotation files. They aren't deployed, but
-  # committing them is what lets each night add to the backfill instead of
-  # starting from nothing. New games arrive as untracked files, hence `add`
-  # before the check rather than `git diff`.
-  git add public/data data-cache
-  if git diff --cached --quiet -- public/data data-cache; then
+  # New files (a new season, a new game's rotation) arrive untracked, hence
+  # `add` before the check rather than `git diff`.
+  git add "${DATA_PATHS[@]}"
+  if git diff --cached --quiet -- "${DATA_PATHS[@]}"; then
     echo "$(date)  no data change ($teams teams) — nothing to push"
   else
     echo "$(date)  data changed — committing and pushing to $BRANCH …"
     # The pathspec keeps anything else you had staged out of the bot's commit.
-    git commit -m "chore: nightly NBA data refresh" -- public/data data-cache
+    git commit -m "chore: nightly NBA data refresh" -- "${DATA_PATHS[@]}"
     if git push origin "$BRANCH"; then
       note=""
       [ "$carried" -gt 0 ] && note=" — $carried league-wide dataset(s) carried over from the previous fetch"
