@@ -5,12 +5,19 @@ import { LEAGUE } from "./league.js";
 // ---------------------------------------------------------------------------
 // CourtChart — a schematic SVG half-court that colors six shot zones either by
 // shooting efficiency (FG% vs the league average for that zone) or by shot volume
-// (share of attempts). FG% and makes/attempts are always printed on each zone.
+// (share of attempts vs the baseline's share of the same zone). FG% and
+// makes/attempts are always printed on each zone.
 //
 // Zones come from the leaguedash*shotlocations feed as { z, m, a } where m/a are
 // season totals; `league` is the same shape aggregated across the whole NBA and
 // is the baseline the efficiency view compares against.
 // ---------------------------------------------------------------------------
+
+// Where the volume scale saturates: taking 1.75x the baseline's share of shots
+// from a zone is full red, 1/1.75 of it is full blue. Team shot diets only
+// spread about 0.45x–1.6x around the league (most zones 0.75x–1.35x), so
+// anything wider than this would leave every team a flat mid-tone.
+const VOL_SATURATION = 1.75;
 
 const r1 = (n) => Math.round(n * 10) / 10;
 const pctOf = (m, a) => (a > 0 ? r1((m / a) * 100) : null);
@@ -198,27 +205,38 @@ export default function CourtChart({ zones, league, baseDesc = `the ${LEAGUE.nam
     return m;
   }, [league]);
 
-  const totalAtt = useMemo(
-    () => (zones || []).reduce((s, z) => s + z.a, 0),
-    [zones]
-  );
-  const maxAtt = useMemo(
-    () => Math.max(1, ...(zones || []).map((z) => z.a)),
-    [zones]
-  );
+  // Attempt totals across the six court zones, for this team/player and for the
+  // baseline. Volume shading compares the two as shares, not raw counts, so a
+  // low-usage player and a whole team are on the same scale.
+  const totalAtt = useMemo(() => totalAttempts(byZone), [byZone]);
+  const baseTotalAtt = useMemo(() => totalAttempts(leagueByZone), [leagueByZone]);
 
   if (!zones || !zones.length) return null;
 
   // Fill color + opacity for a zone under the active mode.
   const fillFor = (key) => {
     const z = byZone.get(key);
-    if (!z || z.a === 0) return { fill: C.PANEL_2, opacity: 0.3 };
+    if (!z || z.a === 0) {
+      // Never shot from here: coldest possible in the volume view, blank in the
+      // efficiency view (there's no FG% to compare).
+      return mode === "vol" ? { fill: C.SHOT_COLD, opacity: 0.7 } : { fill: C.PANEL_2, opacity: 0.3 };
+    }
+    const lz = leagueByZone.get(key);
     if (mode === "vol") {
-      return { fill: C.BRAND, opacity: 0.14 + 0.6 * (z.a / maxAtt) };
+      // Volume: this zone's share of the shooter's attempts against the
+      // baseline's share of the same zone, as a ratio — red above, blue below.
+      // A ratio (not a difference in percentage points) because the zones are
+      // wildly different sizes: 2% of a team's shots is a normal corner-3 diet
+      // and almost no restricted-area diet at all, so raw shares would just
+      // paint the same zones hot for every team.
+      if (!lz || !lz.a || !totalAtt || !baseTotalAtt) return { fill: C.PANEL_2, opacity: 0.55 };
+      const ratio = (z.a / totalAtt) / (lz.a / baseTotalAtt);
+      const t = Math.max(-1, Math.min(1, Math.log2(ratio) / Math.log2(VOL_SATURATION)));
+      const fill = t >= 0 ? hexLerp(C.PANEL_2, C.SHOT_HOT, t) : hexLerp(C.PANEL_2, C.SHOT_COLD, -t);
+      return { fill, opacity: 0.7 };
     }
     // Efficiency: this zone's FG% minus the league's FG% for the same zone,
     // mapped onto a red→neutral→green scale clamped at ±10 percentage points.
-    const lz = leagueByZone.get(key);
     const lp = lz && lz.a > 0 ? (lz.m / lz.a) * 100 : null;
     const p = (z.m / z.a) * 100;
     if (lp == null) return { fill: C.PANEL_2, opacity: 0.55 };
@@ -286,7 +304,7 @@ export default function CourtChart({ zones, league, baseDesc = `the ${LEAGUE.nam
       <p style={{ fontSize: 11, color: C.MUTE, margin: "12px 2px 0", lineHeight: 1.5, textAlign: "center" }}>
         {mode === "eff"
           ? `Each zone shaded by FG% vs ${baseDesc} for that zone — green = above, red = below.`
-          : "Each zone shaded plum by its share of shot attempts — brighter = more shots taken there."}
+          : `Each zone shaded by its share of shot attempts vs ${baseDesc} — red = shoots here more often, blue = rarely or never shoots here.`}
       </p>
     </div>
   );

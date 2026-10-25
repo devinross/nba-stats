@@ -42,6 +42,13 @@ export const C = {
   // Result badges: the lightest readable tint of GOOD / BAD.
   WIN_BG: "#E4F7E9",
   LOSS_BG: "#FDE8E8",
+  // Shot-chart heat scale: hot = shoots here more than the baseline, cold =
+  // less. HOT is ratingPoor (the same fill red the efficiency view uses); COLD
+  // is systemBlue, lightened to roughly ratingPoor's luminance so the zone
+  // labels printed on top stay as readable on a deep-blue zone as on a deep-red
+  // one. The rest of the palette never needed a blue this side of chartBlue.
+  SHOT_HOT: "#FF383C",
+  SHOT_COLD: "#3E9BFF",
   // Recharts hover overlay, on a white page.
   HOVER_FILL: "rgba(0,0,0,.05)",
   // The app's page is plain white; so is this one.
