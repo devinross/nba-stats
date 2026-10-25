@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly NBA data refresh (scripts/refresh.sh), run by launchd. 4:00am local:
+  west-coast games are final, and it's clear of the WNBA site's 3:30 job so the
+  two don't hit stats.nba.com at once. If the Mac is asleep then, launchd runs
+  it at the next wake.
+
+  Install:  cp scripts/com.nba.refresh.plist ~/Library/LaunchAgents/
+            launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nba.refresh.plist
+  Run now:  launchctl kickstart gui/$(id -u)/com.nba.refresh
+  Remove:   launchctl bootout gui/$(id -u)/com.nba.refresh
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.nba.refresh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/devinross/source-code/nba-analytics/scripts/refresh.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/Users/devinross/Library/Logs/nba-refresh.log</string>
+  <key>StandardErrorPath</key><string>/Users/devinross/Library/Logs/nba-refresh.log</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

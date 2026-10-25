@@ -7,10 +7,14 @@ name: Refresh NBA data
 # This only touches the season in progress. Completed seasons are fetched once
 # (npm run fetch -- --missing) and committed by hand; they never change.
 
+#
+# The nightly schedule is OFF. stats.nba.com times out on GitHub's runner IPs
+# (every scheduled run failed from Sept 25, 2026 on), so the nightly refresh
+# runs on the Mac instead: scripts/refresh.sh via scripts/com.nba.refresh.plist.
+# This stays as a manual trigger in case the block ever lifts.
+
 on:
-  schedule:
-    - cron: "0 11 * * *" # 11:00 UTC nightly (~3-4am US Pacific), after west-coast games are final. UTC only; adjust as you like.
-  workflow_dispatch: {} # also lets you trigger a refresh by hand from the Actions tab
+  workflow_dispatch: {} # trigger a refresh by hand from the Actions tab
 
 permissions:
   contents: write # needed so the workflow can push the updated data file
