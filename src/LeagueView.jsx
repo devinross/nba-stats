@@ -65,12 +65,12 @@ function dayLabel(iso) {
 const dayDetail = (iso) =>
   dayDate(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
-/** A tip-off in the visitor's own timezone: "7:00 PM". */
+/** A tip-off in the visitor's own timezone, labelled so it can't be mistaken for ET: "7:00 PM PDT". */
 function tipTime(tip) {
   if (!tip) return "";
   const d = new Date(tip);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
 function Section({ title, hint, stale, source, children, style }) {
