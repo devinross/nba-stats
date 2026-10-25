@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
-// Renders scripts/og-template.html to public/og.png (1200x630), the image
-// social platforms show when someone links this site.
+// Renders scripts/og-template.html to public/og.png (1200x630), the site-wide
+// share image. Every prerendered page now points at its own card instead (see
+// scripts/og-cards.mjs, drawn during `npm run build`); this one remains the
+// fallback in index.html, which is what the dev server and any unprerendered
+// URL serve.
 //
 // Run with `npm run og`. This is NOT part of `npm run build`: it shells out to
 // a local Chrome and needs the network for the webfont, neither of which is

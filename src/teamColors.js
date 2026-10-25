@@ -15,7 +15,7 @@
 // colors.
 // ---------------------------------------------------------------------------
 
-import { C } from "./palette";
+import { C } from "./palette.js";
 
 // [primary, secondary] — the primary is the color the team leads with, so it
 // sits at the top of the wash.
@@ -121,10 +121,15 @@ export function teamColors(team) {
   return COLORS_BY_NAME[nickname] || FALLBACK;
 }
 
+/** The badge's two washed stops, top then bottom — for SVG, which can't take a CSS gradient. */
+export function teamWashStops(team) {
+  return teamColors(team).map(wash);
+}
+
 /** The CSS the badge paints: the team's wash, top to bottom. */
 export function teamGradient(team) {
-  const [top, bottom] = teamColors(team);
-  return `linear-gradient(180deg, ${wash(top)}, ${wash(bottom)})`;
+  const [top, bottom] = teamWashStops(team);
+  return `linear-gradient(180deg, ${top}, ${bottom})`;
 }
 
 // --- color math -------------------------------------------------------------

@@ -14,6 +14,9 @@ export const SITE_URL = "https://nba.highlightfactory.app";
 export const SITE_NAME = "Highlight Factory";
 export const OG_IMAGE = `${SITE_URL}/og.png`;
 
+/** Where scripts/prerender.mjs writes a page's own share card: "/" -> "/og/home.png". */
+export const ogImagePath = (path) => `/og${path === "/" ? "/home" : path}.png`;
+
 const POSITIONS = { G: "guard", F: "forward", C: "center" };
 
 /** "G-F" -> "guard", "" -> null. Only the first listed position is used. */

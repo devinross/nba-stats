@@ -342,6 +342,15 @@ host needs the SPA fallback described in step 5.
   That renders the template with a local headless Chrome and writes the PNG.
   It's deliberately kept out of `npm run build` (it needs a browser on the
   machine and the network for the webfont), so commit the PNG when it changes.
+- **Per-page share cards.** Every prerendered page also gets its own card —
+  team colors, record and ratings on team pages; PPG/RPG/APG/TS% on player
+  pages — written to `dist/og/<path>.png` (`/` is `og/home.png`) by
+  `scripts/og-cards.mjs` during `npm run build`. They're drawn as SVG and
+  rasterised with `@resvg/resvg-js` using the JetBrains Mono files in
+  `scripts/fonts/`, so no browser is needed and they refresh with the nightly
+  data. Each page's `og:image` carries a `?v=<data date>` so Messages and Slack
+  don't keep showing yesterday's numbers. `public/og.png` stays as the fallback
+  in `index.html`.
 
 The production domain is named in `src/pageMeta.js` (`SITE_URL`, which drives
 every canonical and Open Graph URL), `src/config.js`, `index.html` and
@@ -567,6 +576,8 @@ scripts/
   build-icons.mjs       renders the brand mark -> the raster favicons Safari needs
                         (run by hand: `npm run icons`; only after mark.svg changes)
   og-template.html      the artwork for the social share card
+  og-cards.mjs          draws each page's own share card (called by prerender.mjs)
+  fonts/                JetBrains Mono TTFs (OFL) for og-cards.mjs
 public/
   data/index.json       which seasons exist, when each was fetched, what's missing
   data/<season>/league.json      that season's team list + league-wide charts
