@@ -528,8 +528,9 @@ function buildGames(teamRows, teamId, rowsByGame, scoreOf) {
  * page has to open with, and computing it once at fetch time keeps the home
  * page from having to download all thirty team files to add up W-L.
  *
- * Sorted by win percentage, then point differential. Each row carries its
- * conference, and games behind is measured against that conference's leader —
+ * Sorted by win percentage, then games over .500, then point differential. Each
+ * row carries its conference, and games behind is measured against that
+ * conference's leader (the best W-L margin) —
  * the NBA seeds two brackets, so a league-wide GB column would be a number
  * nobody uses. These are not the league's own standings: the real tiebreakers
  * (head-to-head, division, conference record) aren't applied, so teams level on
@@ -577,14 +578,22 @@ function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
     });
   }
 
-  rows.sort((a, b) => b.pct - a.pct || b.diff - a.diff);
+  // Level on percentage, the team further over .500 goes first: 3-0 ahead of 2-0.
+  rows.sort((a, b) => b.pct - a.pct || (b.w - b.l) - (a.w - a.l) || b.diff - a.diff);
   // Games behind and seed, both within the conference — or league-wide for a
   // team the conference map doesn't know, so a row is never left without them.
+  // GB is measured from the conference's best W-L margin, not from whoever sorts
+  // first: early on a 2-0 team can out-percentage a 10-2 one, and measuring
+  // from it would put the 10-2 team at -3 GB. This way no row is ever below 0.
   const leaders = new Map();
+  for (const t of rows) {
+    const key = t.conf || "league";
+    const lead = leaders.get(key);
+    if (!lead || t.w - t.l > lead.w - lead.l) leaders.set(key, t);
+  }
   const seeds = new Map();
   for (const t of rows) {
     const key = t.conf || "league";
-    if (!leaders.has(key)) leaders.set(key, t);
     seeds.set(key, (seeds.get(key) || 0) + 1);
     t.rank = seeds.get(key);
     const lead = leaders.get(key);
