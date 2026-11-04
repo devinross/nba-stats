@@ -28,6 +28,7 @@
 // of it — new players get pages, departed ones stop being listed.
 // ---------------------------------------------------------------------------
 
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -610,10 +611,13 @@ function cardFor({ team, player, view }) {
   };
 }
 
+/** Writes the page's card and returns a short hash of its bytes. */
 function writeCard(path, spec) {
   const file = resolve(distDir, "." + ogImagePath(path));
+  const png = renderCard(spec);
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, renderCard(spec));
+  writeFileSync(file, png);
+  return createHash("sha256").update(png).digest("hex").slice(0, 10);
 }
 
 // --- page assembly ---------------------------------------------------------
@@ -677,10 +681,11 @@ function buildPage({ team, player, path, tab, view }) {
     `<meta property="og:url" content="${meta.canonical}" />`,
     "og:url"
   );
-  // Each page gets its own card. The ?v= changes whenever the data does, so
-  // apps that cache unfurls by URL (Messages, Slack) pick up tonight's numbers.
-  writeCard(path, cardFor({ team, player, view }));
-  const ogImage = `${SITE_URL}${ogImagePath(path)}?v=${updatedISO.slice(0, 10).replace(/-/g, "")}`;
+  // Each page gets its own card. The ?v= is a hash of the image itself, so
+  // apps that cache unfurls by URL (Messages, Slack) refetch exactly when the
+  // card changes — new numbers or a new design — and keep it otherwise.
+  const cardHash = writeCard(path, cardFor({ team, player, view }));
+  const ogImage = `${SITE_URL}${ogImagePath(path)}?v=${cardHash}`;
   html = replaceOnce(
     html,
     /<meta property="og:image" [^>]*>/,

@@ -348,8 +348,9 @@ host needs the SPA fallback described in step 5.
   `og/home.png`) by `scripts/og-cards.mjs` during `npm run build`, drawn as SVG
   and rasterised with `@resvg/resvg-js` using the fonts in `scripts/fonts/` and
   the Twemoji SVGs in `scripts/emoji/`, so no browser is needed and they refresh with the nightly
-  data. Each page's `og:image` carries a `?v=<data date>` so Messages and Slack
-  don't keep showing yesterday's numbers. `public/og.png` stays as the fallback
+  data. Each page's `og:image` carries a `?v=<hash of the PNG>`, so
+  Messages and Slack refetch a card whenever its numbers or design change and
+  keep their cached copy otherwise. `public/og.png` stays as the fallback
   in `index.html`.
 
 The production domain is named in `src/pageMeta.js` (`SITE_URL`, which drives
