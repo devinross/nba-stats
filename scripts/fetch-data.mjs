@@ -15,6 +15,8 @@
 //     npm run fetch -- --no-rotations     skip the per-game rotation backfill
 //     npm run fetch -- --rotation-limit 200   fetch more rotations than the
 //                                         nightly cap (0 = no cap)
+//     npm run fetch -- --no-assists       skip the per-game play-by-play backfill
+//     npm run fetch -- --assist-limit 0   fetch every missing assist game this run
 //
 // Completed seasons never change, so they are fetched once and then left alone;
 // only the current season is worth re-running. A season is named by its start
@@ -25,6 +27,7 @@
 //     public/data/2025/league.json      teams + league-wide sets for 2025-26
 //     public/data/2025/teams/<id>.json  one file per team
 //     data-cache/rotations/2025/<g>.json   one file per game's substitutions
+//     data-cache/assists/2025/<g>.json     one file per game's made field goals
 //
 // Most of this is a handful of league-wide requests. Two things are not: the
 // shot chart is one request per team (the league-wide form truncates — see
@@ -1063,6 +1066,312 @@ function aggregateRotations(byGame, teamIds, orderByTeam, segmentSize = SEGMENT_
   return out;
 }
 
+// ----- assists (who created what) --------------------------------------------
+//
+// Everything above can say who passed and who scored, but never that this
+// player's pass produced that player's shot. That link lives only in the play-
+// by-play.
+//
+// The WNBA fork reads it from `playbyplayv2`, which names the assister by person
+// id. For the NBA that endpoint answers 200 with an empty body, so this reads
+// `playbyplayv3` instead — which is better in one way and worse in another.
+// Better: every made field goal already carries its team, its shot label (the
+// same ACTION_TYPE strings `shotchartdetail` uses, as `subType`) and its value,
+// so there is no shot-chart join to make. Worse: the assister appears only as
+// a surname inside the prose description — "Duren 4' Alley Oop Dunk (2 PTS)
+// (Cunningham 1 AST)" — so he has to be resolved back to a person id against
+// the teammates who appear in the same game (see resolveAssister).
+//
+// This is NOT Synergy play-type data, and nothing here should be read as pick-
+// and-roll or isolation frequency. A pass is described by the shot at the end
+// of it, in the same buckets the shot-type breakdown already uses.
+//
+// One request per game, cached per game and never refetched, like rotations.
+// Unlike rotations, v3 answers in well under a second, so the per-run cap is
+// much higher — a cold season fills in over a few runs rather than months.
+//
+//     data-cache/assists/<season>/<gameId>.json
+//
+// A season is useful long before it is complete, so every figure built here
+// travels with the number of games behind it and the UI says so.
+
+const PBP_DELAY_MS = 600;
+const PBP_BACKOFF_MS = [0, 4000]; // one retry, as with rotations
+const PBP_TIMEOUT_MS = 35000;
+const PBP_BUDGET_MS = 10 * 60 * 1000;
+const PBP_MAX_PER_RUN = 80;
+
+// EndPeriod has to clear overtime; asking for four periods silently drops the
+// overtime makes.
+const PBP_PARAMS = (gameId) => ({ GameID: gameId, StartPeriod: "1", EndPeriod: "14" });
+
+const ASSIST_CACHE_DIR = fileURLToPath(new URL("../data-cache/assists", import.meta.url));
+const assistPath = (season, gameId) => join(ASSIST_CACHE_DIR, String(season), `${gameId}.json`);
+const assistAttemptsPath = (season) => join(ASSIST_CACHE_DIR, String(season), "_attempts.json");
+
+// "(Cunningham 1 AST)" at the end of a made shot's description.
+const ASSIST_TAG = /\(([^()]+?) \d+ AST\)\s*$/;
+// The description and the playerName field don't always agree on diacritics —
+// "Schroder" in one, "Schröder" in the other — so names compare folded.
+const foldName = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+/**
+ * Turn the surname in an assist tag into a person id. First against everyone on
+ * the scorer's team who has an action of their own in this game; then, for the
+ * rare passer whose only line in the play-by-play is the assist, against the
+ * game log's list of who played. Returns -1 when the name is ambiguous or
+ * unknown: the make still counts as assisted, it just can't be given to anyone.
+ */
+function resolveAssister(name, teamId, inGame, played) {
+  const want = foldName(name);
+  const ids = inGame.get(`${teamId}:${want}`);
+  if (ids && ids.size === 1) return [...ids][0];
+  const hits = (played || []).filter((p) => {
+    const full = foldName(p.name);
+    return full === want || full.endsWith(` ${want}`);
+  });
+  return hits.length === 1 ? hits[0].id : -1;
+}
+
+/**
+ * One game's made field goals, in the compact shape that goes to disk:
+ * [scorerId, assisterId, teamId, subType, shotValue], with assisterId 0 for an
+ * unassisted make and -1 for an assist we couldn't put a name to. The raw shot
+ * label is kept rather than a bucket so a change to SHOT_TYPES re-buckets the
+ * whole cache without refetching it.
+ */
+function shapeAssistEvents(json, played) {
+  const actions = (json && json.game && json.game.actions) || [];
+  const inGame = new Map();
+  for (const a of actions) {
+    if (!a.personId || !a.teamId || !a.playerName) continue;
+    const key = `${a.teamId}:${foldName(a.playerName)}`;
+    if (!inGame.has(key)) inGame.set(key, new Set());
+    inGame.get(key).add(a.personId);
+  }
+  const made = [];
+  for (const a of actions) {
+    if (a.isFieldGoal !== 1 || a.shotResult !== "Made" || !a.personId) continue;
+    const tag = String(a.description || "").match(ASSIST_TAG);
+    const assister = tag ? resolveAssister(tag[1], a.teamId, inGame, played && played.get(a.teamId)) : 0;
+    made.push([a.personId, assister, a.teamId, a.subType || "", n(a.shotValue)]);
+  }
+  return made.length ? { made } : null;
+}
+
+/** A game already on disk, or null if we've never successfully fetched it. */
+async function readAssistEvents(season, gameId) {
+  try {
+    const g = JSON.parse(await readFile(assistPath(season, gameId), "utf8"));
+    return g && Array.isArray(g.made) ? g : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readAssistAttempts(season) {
+  try {
+    const j = JSON.parse(await readFile(assistAttemptsPath(season), "utf8"));
+    return j && typeof j === "object" ? j : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * Fill in every game of the season not already cached, and return the full set
+ * keyed by game id. Least-tried games first so the backlog rotates, a hard time
+ * budget, and failures written to a ledger rather than retried into the ground.
+ * `playedBy(gameId)` gives that game's players per team, for resolveAssister.
+ */
+async function fetchAssistEvents(season, gameIds, playedBy, { onPlan, onProgress, limit = PBP_MAX_PER_RUN } = {}) {
+  const byGame = new Map();
+  const missing = [];
+  for (const id of gameIds) {
+    const cached = await readAssistEvents(season, id);
+    if (cached) byGame.set(id, cached);
+    else missing.push(id);
+  }
+
+  const attempts = await readAssistAttempts(season);
+  const triedBefore = (id) => (attempts[id] && attempts[id].n) || 0;
+  const ordered = missing
+    .map((id, i) => ({ id, i }))
+    .sort((a, b) => triedBefore(a.id) - triedBefore(b.id) || a.i - b.i)
+    .map((m) => m.id);
+  const queue = limit > 0 ? ordered.slice(0, limit) : ordered;
+  const deferred = missing.length - queue.length;
+
+  if (onPlan) {
+    onPlan({ total: gameIds.length, cached: byGame.size, missing: missing.length, queued: queue.length, deferred });
+  }
+
+  const failed = [];
+  const deadline = Date.now() + PBP_BUDGET_MS;
+  let ranOut = 0;
+  for (const [i, id] of queue.entries()) {
+    if (Date.now() > deadline) {
+      ranOut = queue.length - i;
+      break;
+    }
+    let game = null;
+    let lastErr = "";
+    const startedAt = Date.now();
+    for (const wait of PBP_BACKOFF_MS) {
+      if (wait) await sleep(wait);
+      try {
+        game = shapeAssistEvents(
+          await statsFetch("playbyplayv3", PBP_PARAMS(id), { timeoutMs: PBP_TIMEOUT_MS }),
+          playedBy(id)
+        );
+        if (game) break;
+        lastErr = "no made-field-goal rows returned";
+      } catch (e) {
+        lastErr = e.message;
+      }
+    }
+    if (game) {
+      await writeJson(assistPath(season, id), game);
+      byGame.set(id, game);
+      delete attempts[id];
+    } else {
+      failed.push({ id, error: lastErr });
+      attempts[id] = { n: triedBefore(id) + 1, last: new Date().toISOString().slice(0, 10), error: lastErr };
+    }
+    if (onProgress) {
+      onProgress({
+        done: i + 1, total: queue.length, failed: failed.length, id,
+        ok: Boolean(game), error: lastErr, ms: Date.now() - startedAt,
+        made: game ? game.made.length : 0,
+        assisted: game ? game.made.filter((m) => m[1]).length : 0,
+      });
+    }
+    await sleep(PBP_DELAY_MS);
+  }
+
+  if (queue.length) await writeJson(assistAttemptsPath(season), attempts);
+
+  return {
+    byGame,
+    cached: gameIds.length - missing.length,
+    fetched: queue.length - failed.length - ranOut,
+    failed,
+    ranOut,
+    deferred,
+  };
+}
+
+// How many pairs a team file carries. Past this the tail is one or two assists
+// a season, which is noise in a chart and bytes in a download.
+const NETWORK_MAX_PAIRS = 30;
+
+// The cutoffs scale with how many games are actually on disk. A fixed threshold
+// tuned for a finished season reads as "no data" for the weeks this backfill
+// spends filling in, when four games is plenty to see that a guard keeps
+// finding the same roller. Scaling means the charts appear as soon as they mean
+// anything and tighten as the season accumulates. An NBA season is 82 games
+// rather than 40-odd, so these ramp a little slower than the WNBA fork's.
+const networkMinPair = (games) => Math.max(2, Math.round(games / 6));
+const dietMinAssists = (games) => Math.max(8, Math.round(games * 0.75));
+
+/**
+ * Roll the cached games up into the three things the team page asks of them:
+ *
+ *   network  — assister to scorer, how often (the pairs an offense runs on)
+ *   diet     — per playmaker, what his assists created, in shot-type buckets
+ *   scorers  — per scorer, how much of his scoring someone else set up
+ *
+ * `names` resolves person ids for display; entries carry their own name rather
+ * than leaning on the roster, so a player who has since been traded still reads
+ * as a person instead of a number. Team comes from the event, not the roster,
+ * so a traded player's assists stay with the club he made them for.
+ */
+function aggregateAssists(byGame, teamIds, orderByTeam, names) {
+  const blank = () => ({ pairs: new Map(), diet: new Map(), scorers: new Map(), games: new Set() });
+  const perTeam = new Map(teamIds.map((id) => [id, blank()]));
+  // Assists whose passer couldn't be named are counted rather than dropped
+  // quietly: a rate that starts climbing means the description format moved.
+  const stats = { made: 0, assisted: 0, unresolved: 0 };
+
+  for (const [gameId, game] of byGame) {
+    for (const [scorer, assister, teamId, subType, value] of game.made) {
+      const t = perTeam.get(teamId);
+      if (!t) continue;
+      stats.made++;
+      t.games.add(gameId);
+
+      const s = t.scorers.get(scorer) || { made: 0, assisted: 0 };
+      s.made++;
+      if (assister) s.assisted++;
+      t.scorers.set(scorer, s);
+
+      if (!assister) continue;
+      stats.assisted++;
+      if (assister < 0) { stats.unresolved++; continue; }
+
+      const key = `${assister}:${scorer}`;
+      t.pairs.set(key, (t.pairs.get(key) || 0) + 1);
+
+      const bucket = classifyShot(subType, value === 3 ? "3PT Field Goal" : "2PT Field Goal");
+      const d = t.diet.get(assister) || { ast: 0, buckets: new Map() };
+      d.ast++;
+      d.buckets.set(bucket, (d.buckets.get(bucket) || 0) + 1);
+      t.diet.set(assister, d);
+    }
+  }
+
+  const nameOf = (id) => names.get(id) || `#${id}`;
+  const out = new Map();
+  for (const [teamId, t] of perTeam) {
+    if (!t.games.size) continue;
+    const scheduled = (orderByTeam.get(teamId) || []).length;
+
+    const network = [...t.pairs]
+      .map(([key, count]) => {
+        const [from, to] = key.split(":").map(Number);
+        return { from, fromName: nameOf(from), to, toName: nameOf(to), n: count };
+      })
+      .filter((p) => p.n >= networkMinPair(t.games.size))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, NETWORK_MAX_PAIRS);
+
+    const diet = [...t.diet]
+      .filter(([, d]) => d.ast >= dietMinAssists(t.games.size))
+      .map(([playerId, d]) => ({
+        playerId,
+        name: nameOf(playerId),
+        ast: d.ast,
+        buckets: [...d.buckets.entries()]
+          .map(([bucket, count]) => ({ t: bucket, n: count }))
+          .sort((a, b) => b.n - a.n),
+      }))
+      .sort((a, b) => b.ast - a.ast);
+
+    const scorers = [...t.scorers]
+      .map(([playerId, s]) => ({
+        playerId,
+        name: nameOf(playerId),
+        made: s.made,
+        assisted: s.assisted,
+        pct: s.made ? Math.round((s.assisted / s.made) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.made - a.made);
+
+    out.set(teamId, {
+      games: t.games.size,
+      scheduled,
+      // The cutoffs travel with the data so the page can say what it filtered
+      // rather than repeating a number that lives in this file.
+      minPair: networkMinPair(t.games.size),
+      minAssists: dietMinAssists(t.games.size),
+      network,
+      diet,
+      scorers,
+    });
+  }
+  return { byTeam: out, stats };
+}
+
 // ----- previous-snapshot fallback --------------------------------------------
 // stats.nba.com is flaky: an endpoint that answered yesterday can return a 500
 // today, and a chart that had been on the page for weeks would simply vanish
@@ -1286,7 +1595,7 @@ function countMissing(payload) {
  * `final` marks a completed season: no schedule to look ahead at, and anything
  * reused from an earlier fetch is simply correct rather than stale.
  */
-async function fetchSeason(season, { outDir, final, nth, of, rotations = true, rotationLimit = ROTATION_MAX_PER_RUN }) {
+async function fetchSeason(season, { outDir, final, nth, of, rotations = true, rotationLimit = ROTATION_MAX_PER_RUN, assists = true, assistLimit = PBP_MAX_PER_RUN }) {
   const startedAt = Date.now();
   const which = of > 1 ? `  [season ${nth} of ${of}]` : "";
   console.log(`\n${"─".repeat(64)}\n${seasonLabel(season)}${final ? " (completed season)" : " (season in progress)"}${which}\n`);
@@ -1746,22 +2055,35 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   // ----- rotations (one request per game, cached forever) -----
   // Anything already on disk is reused, so this is a long backfill spread over
   // the first few runs on a season and a short top-up every night after.
+  // "BOS @ LAL · Nov 12" for a game id, so the log says which matchup is on
+  // the wire rather than an opaque 0022400001. Shared by both per-game
+  // backfills (rotations and assists).
+  const gameLabel = (id) => {
+    const pair = rowsByGame.get(id) || [];
+    if (!pair.length) return String(id);
+    const when = pair[0].GAME_DATE ? ` · ${fmtDate(pair[0].GAME_DATE)}` : "";
+    if (pair.length < 2) return `${String(pair[0].MATCHUP || id)}${when}`;
+    const home = pair.find((r) => String(r.MATCHUP || "").includes(" vs")) || pair[1];
+    const away = pair.find((r) => r !== home) || pair[0];
+    const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
+    return `${ab(away)} @ ${ab(home)}${when}`;
+  };
+  // Each team's schedule in date order — the same sort buildGames uses, so a
+  // block boundary lands on the same game the Results table calls number 20.
+  const orderByTeam = new Map(
+    teamIds.map((tid) => [
+      tid,
+      teamRows
+        .filter((r) => r.TEAM_ID === tid)
+        .sort((a, b) => (a.GAME_DATE < b.GAME_DATE ? -1 : 1))
+        .map((r) => r.GAME_ID),
+    ])
+  );
+
   let rotationByTeam = new Map();
   let rotationErr = null;
   if (rotations) {
     const gameIds = [...rowsByGame.keys()];
-    // "BOS @ LAL · Nov 12" for a game id, so the log says which matchup is on
-    // the wire rather than an opaque 0022400001.
-    const gameLabel = (id) => {
-      const pair = rowsByGame.get(id) || [];
-      if (!pair.length) return String(id);
-      const when = pair[0].GAME_DATE ? ` · ${fmtDate(pair[0].GAME_DATE)}` : "";
-      if (pair.length < 2) return `${String(pair[0].MATCHUP || id)}${when}`;
-      const home = pair.find((r) => String(r.MATCHUP || "").includes(" vs")) || pair[1];
-      const away = pair.find((r) => r !== home) || pair[0];
-      const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
-      return `${ab(away)} @ ${ab(home)}${when}`;
-    };
     // This step is the slowest thing in a run and the only one that can sit
     // silent for half a minute at a time, so it narrates every game rather than
     // sampling. With the per-run cap that is a handful of lines, not a flood.
@@ -1842,19 +2164,8 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
           }
         },
       });
-      // Each team's schedule in date order — the same sort buildGames uses, so
-      // a block boundary here lands on the same game the Results table calls
-      // number 20. Unplayed games have no rotation rows, so they can't shift a
-      // boundary by sitting in the list.
-      const orderByTeam = new Map(
-        teamIds.map((tid) => [
-          tid,
-          teamRows
-            .filter((r) => r.TEAM_ID === tid)
-            .sort((a, b) => (a.GAME_DATE < b.GAME_DATE ? -1 : 1))
-            .map((r) => r.GAME_ID),
-        ])
-      );
+      // Unplayed games have no rotation rows, so they can't shift a block
+      // boundary by sitting in orderByTeam.
       rotationByTeam = aggregateRotations(res.byGame, teamIds, orderByTeam);
       const bits = [`${res.byGame.size}/${gameIds.length} games (${pct(res.byGame.size, gameIds.length)})`];
       if (res.cached) bits.push(`${res.cached} cached`);
@@ -1904,6 +2215,91 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     } catch (e) {
       abandon();
       rotationErr = e.message;
+    }
+  }
+
+  // ----- assists (one request per game, cached forever) -----
+  // Same backfill shape as rotations above, but a much faster endpoint, so the
+  // per-run cap is high enough that a nightly run keeps up with the schedule
+  // and a cold season fills in over a handful of runs.
+  let assistsByTeam = new Map();
+  let assistsErr = null;
+  if (assists) {
+    const gameIds = [...rowsByGame.keys()];
+    // Who played for whom in each game, for putting a person id on the surname
+    // in an assist tag (see resolveAssister). Last row wins on names, so a
+    // player traded mid-season is named the way the leaderboard names him.
+    const playedByGame = new Map();
+    const playerNames = new Map();
+    for (const r of playerRows) {
+      if (r.PLAYER_ID == null) continue;
+      playerNames.set(r.PLAYER_ID, r.PLAYER_NAME);
+      if (!playedByGame.has(r.GAME_ID)) playedByGame.set(r.GAME_ID, new Map());
+      const byTeam = playedByGame.get(r.GAME_ID);
+      if (!byTeam.has(r.TEAM_ID)) byTeam.set(r.TEAM_ID, []);
+      byTeam.get(r.TEAM_ID).push({ id: r.PLAYER_ID, name: r.PLAYER_NAME });
+    }
+    const label = `  • ${seasonLabel(season)} assists … `;
+    begin(label);
+    let lineOpen = true;
+    try {
+      const res = await fetchAssistEvents(season, gameIds, (id) => playedByGame.get(id), {
+        limit: assistLimit,
+        onPlan: ({ total, cached, missing, queued, deferred }) => {
+          if (TTY) return;
+          process.stdout.write("\n");
+          lineOpen = false;
+          console.log(
+            `      ${total} games · ${cached} cached · ${missing} missing → attempting ${queued} this run` +
+              (deferred ? ` · ${deferred} held back by the ${assistLimit}/run cap` : "")
+          );
+        },
+        onProgress: ({ done: done_, total, failed, id, ok, error, ms, made, assisted }) => {
+          const outcome = ok ? `${assisted}/${made} makes assisted` : `FAILED: ${error || "unknown"}`;
+          if (TTY) {
+            process.stdout.write(
+              `\r${label}${done_}/${total}${failed ? ` · ${failed} failed` : ""} · ${gameLabel(id)} · ${outcome}${CLEAR_EOL}`
+            );
+            return;
+          }
+          // A tally every so often rather than a line per game: at this speed a
+          // line per game is eighty lines of nothing much.
+          if (!ok || done_ % 20 === 0 || done_ === total) {
+            console.log(`      [${stamp()}] ${done_}/${total}  ${gameLabel(id)} … ${outcome} · ${(ms / 1000).toFixed(1)}s`);
+          }
+        },
+      });
+
+      const built = aggregateAssists(res.byGame, teamIds, orderByTeam, playerNames);
+      assistsByTeam = built.byTeam;
+
+      const bits = [`${res.byGame.size}/${gameIds.length} games`];
+      if (res.cached) bits.push(`${res.cached} cached`);
+      if (res.fetched) bits.push(`${res.fetched} new`);
+      if (res.failed.length) bits.push(`${res.failed.length} failed — requeued behind the untried games`);
+      if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(PBP_BUDGET_MS / 60000)} min budget)`);
+      if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${assistLimit}/run)`);
+      const summary = bits.join(" · ");
+      done(lineOpen ? summary : `${label}${summary}`);
+
+      // The surname match is the load-bearing assumption here, so it reports
+      // itself: this should sit near zero, and a jump means the description
+      // format or the names in it have moved.
+      const st = built.stats;
+      if (st.assisted) {
+        const rate = ((st.unresolved / st.assisted) * 100).toFixed(1);
+        console.log(
+          `      ${st.made} makes · ${st.assisted} assisted · ${st.unresolved} passers unresolved (${rate}%)`
+        );
+      }
+      if (res.failed.length) {
+        const reasons = [...new Set(res.failed.map((f) => f.error))].slice(0, 3);
+        console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons.join(" / ")}`);
+      }
+      if (!res.byGame.size) assistsErr = "No games returned play-by-play yet.";
+    } catch (e) {
+      abandon();
+      assistsErr = e.message;
     }
   }
 
@@ -1998,8 +2394,10 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     const upcoming = upcomingByTeam.get(teamId) || [];
     const rotation = rotationByTeam.get(teamId) || null;
     if (!rotation && rotations) errors.rotation = rotationErr || "No rotation data for this team yet.";
+    const teamAssists = assistsByTeam.get(teamId) || null;
+    if (!teamAssists && assists) errors.assists = assistsErr || "No play-by-play for this team's games yet.";
 
-    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, upcoming, errors };
+    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, assists: teamAssists, upcoming, errors };
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
@@ -2040,7 +2438,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       if (kept) stale[key] = { at: prevAt, reason: failed };
     }
 
-    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation"];
+    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation", "assists"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
@@ -2050,6 +2448,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         ...errors,
         upcoming: scheduleErr,
         rotation: rotations ? errors.rotation : "rotations were skipped this run (--no-rotations)",
+        assists: assists ? errors.assists : "assists were skipped this run (--no-assists)",
       },
     }));
     if (Object.keys(stale).length) bundle.stale = stale;
@@ -2281,7 +2680,7 @@ function parseSeasonRange(text) {
 }
 
 function parseArgs(argv) {
-  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true, rotationLimit: ROTATION_MAX_PER_RUN };
+  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true, rotationLimit: ROTATION_MAX_PER_RUN, assists: true, assistLimit: PBP_MAX_PER_RUN };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--season" || arg === "--seasons") {
@@ -2302,6 +2701,15 @@ function parseArgs(argv) {
         throw new Error(`--rotation-limit needs a whole number of games (0 for no cap), not "${raw}".`);
       }
       opts.rotationLimit = limit;
+    } else if (arg === "--no-assists") {
+      opts.assists = false;
+    } else if (arg === "--assist-limit") {
+      const raw = argv[++i];
+      const limit = Number(raw);
+      if (!Number.isInteger(limit) || limit < 0) {
+        throw new Error(`--assist-limit needs a whole number of games (0 for no cap), not "${raw}".`);
+      }
+      opts.assistLimit = limit;
     } else if (arg === "--all") {
       opts.seasons = parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
       opts.mode = "explicit";
@@ -2358,6 +2766,7 @@ async function main() {
       const entry = await fetchSeason(season, {
         outDir: opts.outDir, final, nth: i + 1, of: seasons.length,
         rotations: opts.rotations, rotationLimit: opts.rotationLimit,
+        assists: opts.assists, assistLimit: opts.assistLimit,
       });
       if (entry.failed) degraded.push({ season, failed: entry.failed, missing: entry.missing });
     } catch (e) {

@@ -135,6 +135,43 @@ const SOURCES = {
     formula: "Each player's points ÷ the roster's combined points.",
   }),
 
+  playmaking: ({ season, teamId }) => ({
+    label: "Team · Players Traditional (season totals)",
+    url: `${STATS_HOST}/team/${teamId}/players-traditional?${qs({
+      ...SEASON(season),
+      PerMode: "Totals",
+    })}`,
+    formula:
+      "Assists and turnovers per game are each player's season total ÷ games played; the ratio is total assists ÷ total turnovers.",
+  }),
+
+  // The three assist breakdowns share one derivation: each game's play-by-play
+  // names the scorer, the assister and the shot on every made field goal.
+  // nba.com publishes play-by-play per game rather than per season, so the link
+  // goes to the box-score list those games hang off.
+  assistNetwork: ({ season, teamId }) => ({
+    label: "Team · Box Scores (play-by-play)",
+    url: `${STATS_HOST}/team/${teamId}/boxscores-traditional?${qs(SEASON(season))}`,
+    formula:
+      "Ours. Every made field goal in each game's play-by-play, counted by the pair of players on it — the assister and the scorer. " +
+      "Pairs below the threshold stated above the chart are left out.",
+  }),
+
+  assistDiet: ({ season, teamId }) => ({
+    label: "Team · Box Scores (play-by-play)",
+    url: `${STATS_HOST}/team/${teamId}/boxscores-traditional?${qs(SEASON(season))}`,
+    formula:
+      "Ours. Each assisted make's shot description is bucketed the same way the shot-type breakdown buckets it. " +
+      "Shown as each playmaker's share of his own assists.",
+  }),
+
+  assistedShare: ({ season, teamId }) => ({
+    label: "Team · Box Scores (play-by-play)",
+    url: `${STATS_HOST}/team/${teamId}/boxscores-traditional?${qs(SEASON(season))}`,
+    formula:
+      "Ours. A player's made field goals that carried an assister, ÷ all his made field goals, across the games play-by-play has been fetched for.",
+  }),
+
   playerAdv: ({ season, teamId }) => ({
     label: "Players · Advanced",
     url: `${STATS_HOST}/players/advanced?${qs({
@@ -237,7 +274,8 @@ const SOURCES = {
 // known. Listed explicitly rather than sniffed off the builder's source, which
 // a minifier would rewrite.
 const TEAM_SCOPED = new Set([
-  "games", "roster", "teamShooting", "scoringShare",
+  "games", "roster", "teamShooting", "scoringShare", "playmaking",
+  "assistNetwork", "assistDiet", "assistedShare",
   "playerAdv", "playerLog", "playerShotZones", "onOff", "lineups", "rotation",
   "shotTypes", "playerShotTypes",
 ]);

@@ -9,6 +9,8 @@ import {
 } from "recharts";
 import OnOffChart from "./OnOffChart.jsx";
 import RotationChart from "./RotationChart.jsx";
+import PlaymakingChart from "./PlaymakingChart.jsx";
+import { AssistNetwork, AssistDiet, AssistedShare } from "./AssistCharts.jsx";
 import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import StaleNote from "./StaleNote.jsx";
@@ -307,7 +309,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
   // Footnote links back to the nba.com page each section was built from, so
   // any number here can be checked against the source it came from.
   const src = useMemo(
@@ -626,6 +628,15 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           <SourceNote source={src("scoringShare")} />
         </section>
       </div>
+
+      {/* Playmaking — assists against the turnovers they cost */}
+      <PlaymakingChart roster={roster} stale={stale.roster} source={src("playmaking")} />
+
+      {/* Who created what — from play-by-play, which fills in a batch of games
+          per run, so each chart states how many games it stands on. */}
+      <AssistNetwork assists={assists} stale={stale.assists} source={src("assistNetwork")} />
+      <AssistDiet assists={assists} stale={stale.assists} source={src("assistDiet")} />
+      <AssistedShare assists={assists} stale={stale.assists} source={src("assistedShare")} />
 
       {/* Shooting by zone — court map + numbers */}
       <Section title={`${teamName} shooting by zone`} hint={`court shaded vs ${LEAGUE.name} average · toggle volume`} stale={stale.shotZones} source={src("teamShotZones")}>
