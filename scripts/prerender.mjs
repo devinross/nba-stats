@@ -535,10 +535,7 @@ function jsonLdFor({ team, player, path, view }) {
 
 const f1 = (n) => Number(n).toFixed(1);
 const signed = (n) => `${n > 0 ? "+" : ""}${f1(n)}`;
-const lastName = (name) => {
-  const words = String(name).trim().split(/\s+/);
-  return words.length > 1 ? [words[0], words.slice(1).join(" ")] : [name];
-};
+const lastWord = (name) => String(name).trim().split(/\s+/).at(-1);
 
 function cardFor({ team, player, view }) {
   const eyebrow = `${seasonLabel(season)} season`;
@@ -547,31 +544,30 @@ function cardFor({ team, player, view }) {
     const years = index.seasons.map((s) => Number(s.season));
     return {
       eyebrow: `${seasonLabel(Math.min(...years))} to ${seasonLabel(Math.max(...years))}`,
-      lines: [LEAGUE.name, "Trends."],
-      subtitle: "Every team-season on one chart.",
-      chips: ["Shot profile vs win %", "Off vs def rating", "Franchise paths"],
+      title: `${LEAGUE.name} Trends`,
+      detail: "Every team-season on one chart",
     };
   }
 
   if (player) {
     const s = playerSummary(player);
     const role = positionLabel(player.pos);
-    const sub = [player.num && `#${player.num}`, role && role[0].toUpperCase() + role.slice(1), team.name]
-      .filter(Boolean)
-      .join(" · ");
     return {
-      eyebrow,
       team,
-      lines: lastName(player.name),
-      subtitle: sub,
-      stats: s
-        ? [
-            { value: f1(s.ppg), label: "PPG" },
-            { value: f1(s.rpg), label: "RPG" },
-            { value: f1(s.apg), label: "APG" },
-            { value: `${f1(s.ts)}%`, label: "TS%" },
-          ]
-        : [{ value: "—", label: `No ${seasonLabel(season)} games yet` }],
+      eyebrow: [player.num && `#${player.num}`, role && role[0].toUpperCase() + role.slice(1), team.name]
+        .filter(Boolean)
+        .join(" · "),
+      title: player.name,
+      ...(s
+        ? {
+            stats: [
+              { value: f1(s.ppg), label: "PPG" },
+              { value: f1(s.rpg), label: "RPG" },
+              { value: f1(s.apg), label: "APG" },
+              { value: `${f1(s.ts)}%`, label: "TS%" },
+            ],
+          }
+        : { detail: `No ${seasonLabel(season)} games yet` }),
     };
   }
 
@@ -579,20 +575,19 @@ function cardFor({ team, player, view }) {
     const s = teamSummary(team);
     const ranks = (league.teamRanks?.teams || []).slice().sort((a, b) => b.net - a.net);
     const netRank = ranks.findIndex((t) => t.teamId === team.id);
-    const lines = team.city && team.teamName && team.name !== team.teamName ? [team.city, team.teamName] : [team.name];
     return {
-      eyebrow,
       team,
-      lines,
-      subtitle: isArchive ? "Shot charts, four factors & lineups" : "Team stats, shot charts & lineups",
-      stats: s.gp
-        ? [
-            { value: `${s.wins}–${s.losses}`, label: "Record" },
-            { value: f1(s.ppg), label: "PPG" },
-            s.rank ? { value: signed(s.rank.net), label: "Net rating" } : { value: signed(s.margin), label: "Margin" },
-            ...(netRank >= 0 ? [{ value: `#${netRank + 1}`, label: "Net rank" }] : []),
-          ]
-        : [{ value: "—", label: `No ${seasonLabel(season)} games yet` }],
+      eyebrow: netRank >= 0 ? `${eyebrow} · #${netRank + 1} net rating` : eyebrow,
+      title: team.name,
+      ...(s.gp
+        ? {
+            stats: [
+              { value: `${s.wins}–${s.losses}`, label: "Record" },
+              { value: f1(s.ppg), label: "PPG" },
+              s.rank ? { value: signed(s.rank.net), label: "Net rating" } : { value: signed(s.margin), label: "Margin" },
+            ],
+          }
+        : { detail: `No ${seasonLabel(season)} games yet` }),
     };
   }
 
@@ -607,15 +602,11 @@ function cardFor({ team, player, view }) {
   const stats = [];
   if (bestTeam) stats.push({ value: `${bestTeam.abbr} ${best.w}–${best.l}`, label: "Best record" });
   if (topNet) stats.push({ value: `${topNet.abbr} ${signed(topNet.net)}`, label: "Best net rating" });
-  if (scorer) stats.push({ value: `${f1(scorer.v)} PPG`, label: `${lastName(scorer.name).at(-1)}, top scorer` });
+  if (scorer) stats.push({ value: f1(scorer.v), label: `PPG, ${lastWord(scorer.name)}` });
   return {
     eyebrow: isArchive ? `${seasonLabel(season)} season · final` : eyebrow,
-    lines: isArchive ? [`${seasonLabel(season)} ${LEAGUE.name}`, "Season."] : [LEAGUE.name, "Stats."],
-    subtitle: isArchive
-      ? "Final standings, leaders, shot charts & lineups."
-      : "Standings, shot charts, lineups & on/off — nightly.",
-    stats: stats.length ? stats : undefined,
-    chips: stats.length ? undefined : ["Shot zones", "Four factors", "Lineups", "On/off", "League ranks"],
+    title: isArchive ? `${seasonLabel(season)} ${LEAGUE.name} Season` : `${LEAGUE.name} Stats`,
+    ...(stats.length ? { stats } : { detail: "Shot charts, four factors & lineups" }),
   };
 }
 

@@ -7,96 +7,117 @@
 // same nightly numbers as the pages they describe. scripts/prerender.mjs calls
 // renderCard once per page and writes the PNG next to the HTML.
 //
-// Same visual language as scripts/og-template.html (the site-wide og.png):
-// white ground, JetBrains Mono, the brand mark top-left and a slab of color
-// bleeding off the right edge — plum for league pages, the team's own colors
-// for team and player pages.
+// Same template as the Highlight Factory hub's link previews (og/layouts.jsx
+// there): white ground, a tile on the left — the team badge, or the brand mark
+// for league pages — then a gray eyebrow, the name in JetBrains Mono, and the
+// numbers under it. The badge is the site's TeamBadge: the team's wash with
+// its emoji in the middle. resvg can't draw a color emoji font, so the emoji
+// comes from Twemoji's SVGs (scripts/emoji/, as the hub's previews use), and a
+// team whose emoji isn't there falls back to its abbreviation.
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
-import { C } from "../src/palette.js";
-import { teamColors, teamWashStops } from "../src/teamColors.js";
+import { teamWashStops } from "../src/teamColors.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 
 export const CARD_W = 1200;
 export const CARD_H = 630;
-const PAD_X = 80;
-const FONT = "JetBrains Mono";
-// Every JetBrains Mono glyph advances 0.6em; titles are set at -0.04em.
-const ADVANCE = 0.6;
-const TITLE_TRACK = -0.04;
 
-const FONT_FILES = ["Regular", "SemiBold", "Bold"].map((w) =>
-  resolve(here, "fonts", `JetBrainsMono-${w}.ttf`)
-);
+const GRAY = "#7E7E7E";
+const MONO = "JetBrains Mono";
+const SANS = "Inter";
+// Every JetBrains Mono glyph advances 0.6em. Inter is proportional; 0.56em is
+// a little over its average for the digits, capitals and punctuation the
+// eyebrow and labels carry, so fitting by it errs on the side of room.
+const MONO_ADVANCE = 0.6;
+const SANS_ADVANCE = 0.56;
+
+const FONT_FILES = [
+  "JetBrainsMono-Regular.ttf",
+  "JetBrainsMono-SemiBold.ttf",
+  "Inter-Regular.otf",
+  "Inter-Medium.otf",
+].map((f) => resolve(here, "fonts", f));
 
 // The mark's artwork, lifted from the SVG the favicon is built from so the two
 // can't drift.
 const markSvg = readFileSync(resolve(root, "public/brand/mark.svg"), "utf8");
 const MARK_PATH = /<path[^>]*\sd="([^"]+)"/.exec(markSvg)[1];
+const BRAND_CORAL = "#DB6A59";
+
+// Twemoji names its files by codepoint, without the emoji-presentation selector.
+const emojiFile = (emoji) =>
+  resolve(here, "emoji", `${[...emoji].filter((c) => c !== "\uFE0F").map((c) => c.codePointAt(0).toString(16)).join("-")}.svg`);
+const emojiCache = new Map();
+function emojiHref(emoji) {
+  if (!emoji) return null;
+  if (!emojiCache.has(emoji)) {
+    let href = null;
+    try {
+      href = `data:image/svg+xml;base64,${readFileSync(emojiFile(emoji)).toString("base64")}`;
+    } catch (_) {
+      console.warn(`og-cards: no Twemoji SVG for ${emoji} — drawing the abbreviation instead.`);
+    }
+    emojiCache.set(emoji, href);
+  }
+  return emojiCache.get(emoji);
+}
+
+// The hub's Row: a 300px tile, 48px gap, 96px side padding.
+const PAD = 96;
+const TILE = 300;
+const TEXT_X = PAD + TILE + 48;
+const TEXT_W = CARD_W - PAD - TEXT_X;
 
 const esc = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** The largest size, up to `max`, at which `text` fits in `width`. */
-function fitSize(text, width, max, track = TITLE_TRACK) {
-  const em = [...String(text)].length * (ADVANCE + track);
-  return Math.floor(Math.min(max, width / Math.max(em, 1)));
+function fitSize(text, width, max, advance = MONO_ADVANCE) {
+  return Math.floor(Math.min(max, width / Math.max([...String(text)].length * advance, 1)));
 }
 
-function luminance(hex) {
-  const n = parseInt(hex.replace("#", ""), 16);
-  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+/** Greedy word wrap for the mono face; null if a single word can't fit. */
+function wrap(text, maxChars) {
+  const lines = [];
+  for (const word of String(text).split(/\s+/)) {
+    if (word.length > maxChars) return null;
+    const last = lines.at(-1);
+    if (last && last.length + 1 + word.length <= maxChars) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(word);
+  }
+  return lines;
 }
+
+/** The title at the hub's 70px, stepping down until it wraps into two lines. */
+function titleLines(title) {
+  for (const size of [70, 62, 54, 48, 42]) {
+    const lines = wrap(title, Math.floor(TEXT_W / (size * MONO_ADVANCE)));
+    if (lines && lines.length <= 2) return { size, lines };
+  }
+  return { size: 42, lines: [title] };
+}
+
+// ---- tiles -----------------------------------------------------------------
 
 /**
- * The team color that can carry text on white: the primary unless it's too
- * pale (the Spurs' silver), then the secondary, then plain black.
+ * TeamBadge: the team's wash down a disc, the emoji centered at 0.52 of the
+ * diameter (src/TeamBadge.jsx's proportion).
  */
-function inkFor(team) {
-  if (!team) return C.BRAND;
-  const readable = teamColors(team).find((hex) => luminance(hex) < 0.3);
-  return readable || C.TXT;
-}
-
-function brandRow(eyebrow) {
-  return `
-  <g transform="translate(${PAD_X}, 66) scale(1.56)">
-    <path d="${MARK_PATH}" fill="${C.TXT}" fill-rule="evenodd" transform="translate(0.4, 0.5)"/>
-    <circle cx="15.4" cy="12.5" r="5" fill="#DB6A59"/>
-  </g>
-  <text x="${PAD_X + 58}" y="100" font-size="30" font-weight="600" letter-spacing="-0.3">Highlight Factory</text>
-  ${eyebrow ? `<text x="${CARD_W - PAD_X}" y="98" text-anchor="end" font-size="22" font-weight="600" fill="${C.MUTE}" letter-spacing="1.5">${esc(eyebrow.toUpperCase())}</text>` : ""}`;
-}
-
-function wash(team) {
-  const [top, bottom] = team ? teamWashStops(team) : [C.BRAND, C.BRAND_HI];
-  const opacity = team ? 0.22 : 0.1;
-  return `
-  <defs>
-    <linearGradient id="wash" x1="0" y1="0" x2="0.5" y2="1">
-      <stop offset="0" stop-color="${top}"/>
-      <stop offset="1" stop-color="${bottom}"/>
-    </linearGradient>
-  </defs>
-  <rect x="${CARD_W - 540}" y="-180" width="720" height="990" fill="url(#wash)" opacity="${opacity}"
-        transform="rotate(-12 ${CARD_W - 180} 315)"/>`;
-}
-
-/** The team disc, abbreviation in place of the app's emoji (no emoji font here). */
-function badge(team, cx, cy, r) {
+function badge(team, x, y, size) {
   const [top, bottom] = teamWashStops(team);
-  // White reads on the deep washes; a pale primary (the Spurs' silver) needs black.
-  const label = luminance(teamColors(team)[0]) < 0.3 ? "#FFFFFF" : C.TXT;
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const href = emojiHref(team.emoji);
+  const glyph = size * 0.52;
+  const center = href
+    ? `<image x="${cx - glyph / 2}" y="${cy - glyph / 2}" width="${glyph}" height="${glyph}" href="${href}"/>`
+    : `<text x="${cx}" y="${cy + size * 0.1}" text-anchor="middle" font-family="${SANS}" font-weight="500" font-size="${size * 0.28}">${esc(team.abbr || "")}</text>`;
   return `
   <defs>
     <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
@@ -104,83 +125,86 @@ function badge(team, cx, cy, r) {
       <stop offset="1" stop-color="${bottom}"/>
     </linearGradient>
   </defs>
-  <circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#badge)"/>
-  <text x="${cx}" y="${cy + r * 0.2}" text-anchor="middle" font-size="${Math.round(r * 0.58)}" font-weight="700"
-        fill="${label}" letter-spacing="-1">${esc(team.abbr || "")}</text>`;
+  <circle cx="${cx}" cy="${cy}" r="${size / 2}" fill="#FFFFFF"/>
+  <circle cx="${cx}" cy="${cy}" r="${size / 2}" fill="url(#badge)"/>
+  ${center}`;
 }
 
-/** Two big title lines, the second in the accent color — "NBA / Stats." */
-function titleBlock({ lines, accent, x, top, width, max }) {
-  const size = Math.min(...lines.map((l) => fitSize(l, width, max)));
-  const lead = size * 1.0;
-  return {
-    height: lead * lines.length,
-    svg: lines
-      .map(
-        (line, i) =>
-          `<text x="${x}" y="${top + size * 0.82 + lead * i}" font-size="${size}" font-weight="700" ` +
-          `letter-spacing="${(size * TITLE_TRACK).toFixed(1)}"${i === lines.length - 1 ? ` fill="${accent}"` : ""}>${esc(line)}</text>`
-      )
-      .join("\n  "),
-  };
+/** The brand mark, filling the tile the way the badge does. */
+function mark(x, y, size) {
+  const scale = (size * 0.8) / 28;
+  const w = 27 * scale;
+  const h = 28 * scale;
+  return `
+  <g transform="translate(${(x + (size - w) / 2).toFixed(1)}, ${(y + (size - h) / 2).toFixed(1)}) scale(${scale.toFixed(3)})">
+    <path d="${MARK_PATH}" fill="#000000" fill-rule="evenodd" transform="translate(0.4, 0.5)"/>
+    <circle cx="15.4" cy="12.5" r="5" fill="${BRAND_CORAL}"/>
+  </g>`;
 }
 
-function statRow(stats, y) {
-  const w = (CARD_W - PAD_X * 2) / stats.length;
-  return stats
-    .map((s, i) => {
-      const x = PAD_X + w * i;
-      const valueSize = fitSize(s.value, w - 32, 56, -0.02);
-      return `
-  ${i ? `<line x1="${x - 1}" y1="${y - 4}" x2="${x - 1}" y2="${y + 92}" stroke="${C.LINE}" stroke-width="2"/>` : ""}
-  <text x="${x + (i ? 28 : 0)}" y="${y + 52}" font-size="${valueSize}" font-weight="700" letter-spacing="${(valueSize * -0.02).toFixed(1)}">${esc(s.value)}</text>
-  <text x="${x + (i ? 28 : 0)}" y="${y + 88}" font-size="20" font-weight="600" fill="${C.MUTE}" letter-spacing="1.2">${esc(s.label.toUpperCase())}</text>`;
-    })
-    .join("");
-}
-
-function chipRow(chips, y) {
-  let x = PAD_X;
-  return chips
-    .map((c) => {
-      const w = Math.round([...c].length * 21 * ADVANCE + 46);
-      const svg = `
-  <rect x="${x}" y="${y}" width="${w}" height="54" rx="27" fill="none" stroke="${C.LINE}" stroke-width="1.5"/>
-  <text x="${x + w / 2}" y="${y + 35}" text-anchor="middle" font-size="21" font-weight="600" fill="${C.BRAND}">${esc(c)}</text>`;
-      x += w + 12;
-      return x - 12 > CARD_W - PAD_X ? "" : svg;
-    })
-    .join("");
-}
+// ---- card ------------------------------------------------------------------
 
 /**
  * The card's SVG.
- *   eyebrow   small caps, top right ("2026-27 season")
- *   lines     the title, one or two lines; the last is set in the accent
- *   subtitle  one muted line under the title
- *   stats     up to four {value, label} tiles along the bottom, or
- *   chips     pill labels along the bottom
- *   team      tints the wash and accent and adds the badge
+ *   eyebrow   small gray line above the title ("#2 · Guard · Thunder")
+ *   title     the name, in mono; wraps to two lines
+ *   detail    one gray line under the title, or
+ *   stats     up to four {value, label} pairs under the title
+ *   team      draws its badge as the tile; without it, the brand mark
  */
-export function cardSvg({ eyebrow, lines, subtitle, stats, chips, team }) {
-  const accent = inkFor(team);
-  const badgeR = team ? 92 : 0;
-  const textX = team ? PAD_X + badgeR * 2 + 40 : PAD_X;
-  const textW = CARD_W - PAD_X - textX;
+export function cardSvg({ eyebrow, title, detail, stats, team }) {
+  const t = titleLines(title);
+  const lead = t.size * 1.15;
+  const eyebrowSize = eyebrow ? Math.min(30, fitSize(eyebrow, TEXT_W, 30, SANS_ADVANCE)) : 0;
+  const detailSize = detail ? Math.min(42, fitSize(detail, TEXT_W, 42, SANS_ADVANCE)) : 0;
+  const statsH = stats?.length ? 24 + 52 + 34 : 0;
 
-  const title = titleBlock({ lines, accent, x: textX, top: 176, width: textW, max: team ? 96 : 104 });
-  const subY = 176 + title.height + 44;
-  const fitSub = subtitle ? Math.min(27, fitSize(subtitle, textW, 27, 0)) : 0;
+  // Stack the block and center it on the tile, as the hub's flex row does.
+  const blockH =
+    (eyebrow ? eyebrowSize * 1.2 + 12 : 0) + lead * t.lines.length + (detail ? 12 + detailSize * 1.2 : 0) + statsH;
+  let y = (CARD_H - blockH) / 2;
+  const parts = [];
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}"
-     font-family="${FONT}" fill="${C.TXT}">
+  if (eyebrow) {
+    parts.push(
+      `<text x="${TEXT_X}" y="${(y + eyebrowSize * 0.95).toFixed(1)}" font-family="${SANS}" font-size="${eyebrowSize}" fill="${GRAY}">${esc(eyebrow)}</text>`
+    );
+    y += eyebrowSize * 1.2 + 12;
+  }
+  t.lines.forEach((line, i) => {
+    parts.push(
+      `<text x="${TEXT_X}" y="${(y + lead * i + t.size * 0.88).toFixed(1)}" font-family="${MONO}" font-size="${t.size}">${esc(line)}</text>`
+    );
+  });
+  y += lead * t.lines.length;
+
+  if (detail) {
+    y += 12;
+    parts.push(
+      `<text x="${TEXT_X}" y="${(y + detailSize * 0.95).toFixed(1)}" font-family="${SANS}" font-size="${detailSize}" fill="${GRAY}">${esc(detail)}</text>`
+    );
+  }
+
+  if (stats?.length) {
+    y += 24;
+    const w = TEXT_W / stats.length;
+    // One size for the row, set by the longest value, so the numbers line up.
+    const valueSize = Math.min(...stats.map((s) => fitSize(s.value, w - 32, 48)));
+    stats.forEach((s, i) => {
+      const x = TEXT_X + w * i;
+      const labelSize = Math.min(22, fitSize(s.label, w - 12, 22, SANS_ADVANCE));
+      parts.push(
+        `<text x="${x}" y="${(y + 44).toFixed(1)}" font-family="${MONO}" font-size="${valueSize}" font-weight="600">${esc(s.value)}</text>`,
+        `<text x="${x}" y="${(y + 52 + 28).toFixed(1)}" font-family="${SANS}" font-size="${labelSize}" font-weight="500" fill="${GRAY}">${esc(s.label)}</text>`
+      );
+    });
+  }
+
+  const tileY = (CARD_H - TILE) / 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}" fill="#000000">
   <rect width="100%" height="100%" fill="#FFFFFF"/>
-  ${wash(team)}
-  ${brandRow(eyebrow)}
-  ${team ? badge(team, PAD_X + badgeR, 176 + title.height / 2, badgeR) : ""}
-  ${title.svg}
-  ${subtitle ? `<text x="${textX}" y="${subY}" font-size="${fitSub}" fill="${C.MUTE}">${esc(subtitle)}</text>` : ""}
-  ${stats?.length ? statRow(stats, 474) : chips?.length ? chipRow(chips, 500) : ""}
+  ${team ? badge(team, PAD, tileY, TILE) : mark(PAD, tileY, TILE)}
+  ${parts.join("\n  ")}
 </svg>`;
 }
 
@@ -188,7 +212,7 @@ export function cardSvg({ eyebrow, lines, subtitle, stats, chips, team }) {
 export function renderCard(spec) {
   const resvg = new Resvg(cardSvg(spec), {
     fitTo: { mode: "original" },
-    font: { fontFiles: FONT_FILES, loadSystemFonts: false, defaultFontFamily: FONT },
+    font: { fontFiles: FONT_FILES, loadSystemFonts: false, defaultFontFamily: MONO },
   });
   return resvg.render().asPng();
 }

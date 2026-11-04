@@ -332,22 +332,22 @@ host needs the SPA fallback described in step 5.
   and season attached in an `.sr-only` span since the visible design only has
   room for the short name. Section headings are `<h2>`; on the Players tab the
   player name is the `<h2>` and its sections are `<h3>`.
-- **`public/og.png`** is the 1200x630 share card. It is *generated*, not drawn
-  by hand — edit `scripts/og-template.html` and run:
+- **`public/og.png`** is the 1200x630 fallback share card (what `index.html`
+  points at before prerendering). It's drawn by the same renderer as the
+  per-page cards below, minus the nightly numbers — re-run it when the card
+  design changes and commit the PNG:
 
   ```bash
   npm run og
   ```
-
-  That renders the template with a local headless Chrome and writes the PNG.
-  It's deliberately kept out of `npm run build` (it needs a browser on the
-  machine and the network for the webfont), so commit the PNG when it changes.
-- **Per-page share cards.** Every prerendered page also gets its own card —
-  team colors, record and ratings on team pages; PPG/RPG/APG/TS% on player
-  pages — written to `dist/og/<path>.png` (`/` is `og/home.png`) by
-  `scripts/og-cards.mjs` during `npm run build`. They're drawn as SVG and
-  rasterised with `@resvg/resvg-js` using the JetBrains Mono files in
-  `scripts/fonts/`, so no browser is needed and they refresh with the nightly
+- **Per-page share cards.** Every prerendered page also gets its own card, in
+  the Highlight Factory hub's link-preview template: the team badge (its wash
+  and emoji) or the brand mark on the left, then a gray eyebrow, the name in
+  mono and the numbers — record and ratings on team pages, PPG/RPG/APG/TS% on
+  player pages. They're written to `dist/og/<path>.png` (`/` is
+  `og/home.png`) by `scripts/og-cards.mjs` during `npm run build`, drawn as SVG
+  and rasterised with `@resvg/resvg-js` using the fonts in `scripts/fonts/` and
+  the Twemoji SVGs in `scripts/emoji/`, so no browser is needed and they refresh with the nightly
   data. Each page's `og:image` carries a `?v=<data date>` so Messages and Slack
   don't keep showing yesterday's numbers. `public/og.png` stays as the fallback
   in `index.html`.
@@ -572,12 +572,12 @@ scripts/
                          the league constants it reads live in src/league.js)
   prerender.mjs         after `vite build`: one HTML page per team/player, every season, + sitemap.xml
   indexnow.mjs          after prerender: pings IndexNow with the URLs this deploy changed (production only)
-  build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
+  build-og.mjs          draws the fallback card -> public/og.png (run by hand: `npm run og`)
   build-icons.mjs       renders the brand mark -> the raster favicons Safari needs
                         (run by hand: `npm run icons`; only after mark.svg changes)
-  og-template.html      the artwork for the social share card
   og-cards.mjs          draws each page's own share card (called by prerender.mjs)
-  fonts/                JetBrains Mono TTFs (OFL) for og-cards.mjs
+  fonts/                JetBrains Mono + Inter (OFL) for og-cards.mjs
+  emoji/                Twemoji SVGs (CC-BY 4.0) for the card's team badges
 public/
   data/index.json       which seasons exist, when each was fetched, what's missing
   data/<season>/league.json      that season's team list + league-wide charts
